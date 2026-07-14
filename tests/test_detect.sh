@@ -27,6 +27,7 @@ test_detect_gpu_vendor() {
     assert_eq "$(detect_gpu_vendor 'Intel Corporation UHD Graphics
 NVIDIA Corporation GP108M')" nvidia "hybrid => nvidia"
     assert_eq "$(detect_gpu_vendor 'Red Hat, Inc. Virtio GPU')" other "vm => other"
+    assert_eq "$(detect_gpu_vendor 'VGA compatible controller: ATI Technologies Inc Rage 128 Pro')" amd "bare ATI whole-word => amd"
 }
 
 test_gpu_packages() {

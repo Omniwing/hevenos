@@ -24,7 +24,7 @@ ucode_for_vendor() {
 detect_gpu_vendor() {
     local out="$1"
     if   grep -qi 'nvidia' <<<"$out"; then echo nvidia
-    elif grep -qiE 'amd/ati|amd|radeon' <<<"$out"; then echo amd
+    elif grep -qiE 'amd|\bati\b|radeon' <<<"$out"; then echo amd
     elif grep -qi 'intel' <<<"$out"; then echo intel
     else echo other; fi
 }
