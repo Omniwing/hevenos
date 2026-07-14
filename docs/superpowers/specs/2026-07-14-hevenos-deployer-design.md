@@ -43,6 +43,8 @@ hevenos/
       fonts-extra.txt     # the ~78 other Nerd Fonts (off by default)
       security-tools.txt  # official-repo pentest tools minus nmap (off by default)
       asus.txt            # asusctl / asusctl-debug / rog-control-center (off by default)
+  overlay/
+    fish_greeting.fish    # console login banner (deployer-owned, not from tarball)
   payload/
     desktop-env.tar.gz    # SCRUBBED, rebuilt config tarball
   README.md
@@ -182,6 +184,19 @@ This step runs in the chroot alongside §8 and is tolerant/`--needed` like it.
 - `chsh -s /usr/bin/fish <user>` (also set at creation, belt-and-suspenders).
 - **No autologin, no greetd.** By design the machine boots to a plain tty; the
   user logs in and types `niri`. Nothing to configure here.
+- **Console login banner:** install `overlay/fish_greeting.fish` to
+  `~/.config/fish/functions/fish_greeting.fish` (chown to the user). A
+  Raspberry/Orange-Pi-style greeting: a small ASCII `hevenos` wordmark, a
+  randomly chosen ASCII-safe hello (`Hello`/`Hola`/`Ciao`/`Ahoy`/… — a
+  different one each login), host/kernel/uptime info lines, and a highlighted
+  `>> type 'niri' to start the desktop` tip.
+  - Implemented as fish's `fish_greeting` override, **gated** to fire only on a
+    real console login (`status is-login` and `TERM=linux`) so it never
+    prints inside kitty terminals within a running niri session.
+  - ASCII-only by necessity: the Linux VT console font has no emoji or CJK
+    glyphs. Uses `uname -n` (always present) rather than the `hostname` binary
+    (needs `inetutils`, not guaranteed). Deployer-owned (lives in `overlay/`,
+    not the tarball) so the banner is editable without rebuilding the payload.
 
 ### 11. Hand-off
 - Copy `stage2.sh` into `/home/<user>`, `chown` it, print:
