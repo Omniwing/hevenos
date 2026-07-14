@@ -185,6 +185,7 @@ CHROOT
 
 handoff() {
     cp "$HERE/stage2.sh" "$MNT/home/$HEVENOS_USER/"
+    chmod +x "$MNT/home/$HEVENOS_USER/stage2.sh"
     mkdir -p "$MNT/home/$HEVENOS_USER/hevenos/packages/optional"
     cp "$HERE/packages/aur.txt" "$MNT/home/$HEVENOS_USER/hevenos/packages/"
     cp "$HERE/packages/optional/asus.txt" "$MNT/home/$HEVENOS_USER/hevenos/packages/optional/"
