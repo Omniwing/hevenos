@@ -61,20 +61,17 @@ Rebuild `desktop-env.tar.gz` from a cleaned extraction, removing:
 3. `.local/bin/terminalgpt` — dangling symlink to a pipx OpenAI CLI (the
    consumer of the key above).
 4. `.config/fish/fish_variablescV1lM2c1Kr` — leftover atomic-write temp file.
+5. `.local/bin/uv` and `.local/bin/uvx` — ~60 MB of vendored general Python
+   tooling, unnecessary for a basic install and reinstallable later
+   (`pacman -S uv`). Dropping them is the single biggest payload reduction.
 
 Then rebuild (`cd ~; tar czf ...` with relative paths, per project convention —
 never `-C $HOME`). **Rotate the OpenAI key** out-of-band regardless — it has
 already lived on a USB stick and in another user's home directory.
 
 Verified clean when, against the rebuilt tarball:
-`tar xzf ... -O` / `grep -r OPENAI_API_KEY` finds nothing, and
-`.local/bin/{claude,terminalgpt}` are absent.
-
-Note (not AI, flagged separately): `.local/bin/` also vendors `uv` + `uvx`
-(~60 MB of the extracted tree). They are general Python tooling, not AI-only,
-so they stay by default — but they dominate tarball size and could be dropped
-(reinstallable via pacman/`paru`) if a leaner payload is wanted. Decision
-deferred; currently kept.
+`grep -r OPENAI_API_KEY` finds nothing, and
+`.local/bin/{claude,terminalgpt,uv,uvx}` are absent.
 
 ## Stage 1 — `install.sh`
 
