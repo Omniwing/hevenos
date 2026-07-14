@@ -12,9 +12,12 @@ build_payload() {
     tar xzf "$src" -C "$root"
 
     # 1. Strip the live OpenAI key line (keep every other SETUVAR).
+    #    Case-insensitive: fish universal vars are case-sensitive, so
+    #    OPENAI_API_KEY and openai_api_key are two distinct stored
+    #    SETUVAR lines that can both carry the same live secret.
     local fv="$root/.config/fish/fish_variables"
     if [[ -f "$fv" ]]; then
-        grep -v 'OPENAI_API_KEY' "$fv" > "$fv.new" && mv "$fv.new" "$fv"
+        grep -vi 'OPENAI_API_KEY' "$fv" > "$fv.new" && mv "$fv.new" "$fv"
     fi
     # 2-4. Remove temp file, AI symlinks, vendored uv/uvx.
     rm -f "$root/.config/fish/"fish_variables?*   # atomic-write leftovers only
@@ -26,7 +29,7 @@ build_payload() {
     rm -rf "$work"
 
     # Fail loud if the key somehow survived.
-    if tar xzf "$out" -O ./.config/fish/fish_variables 2>/dev/null | grep -q OPENAI_API_KEY; then
+    if tar xzf "$out" -O ./.config/fish/fish_variables 2>/dev/null | grep -qi OPENAI_API_KEY; then
         echo "ERROR: OPENAI_API_KEY still present in $out" >&2
         return 1
     fi

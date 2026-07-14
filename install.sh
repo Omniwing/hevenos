@@ -6,6 +6,7 @@ source "$HERE/lib/detect.sh"
 source "$HERE/lib/packages.sh"
 
 MNT="${HEVENOS_MNT:-/mnt}"
+NVIDIA_PROPRIETARY=""   # set to "yes" in install_packages if chosen; read by install_bootloader
 
 detect_all() {
     is_x86_64 || die "This machine is not x86_64; mainline Arch is x86_64-only."
@@ -90,12 +91,14 @@ install_bootloader() {
 default arch
 timeout 3
 EOF
+        local extra_opts=""
+        [[ "${NVIDIA_PROPRIETARY:-}" == yes ]] && extra_opts=" nvidia-drm.modeset=1"
         {
             echo "title   Arch Linux (hevenos)"
             echo "linux   /vmlinuz-linux"
             [[ -n "$UCODE" ]] && echo "initrd  /$UCODE.img"
             echo "initrd  /initramfs-linux.img"
-            echo "options root=UUID=$root_uuid rw"
+            echo "options root=UUID=$root_uuid rw$extra_opts"
         } > "$MNT/boot/loader/entries/arch.conf"
     else
         arch-chroot "$MNT" grub-install --target=i386-pc "$DISK"
@@ -139,8 +142,10 @@ install_packages() {
     if [[ "$GPU" == nvidia ]]; then
         if ask_yes_no "NVIDIA: install proprietary driver instead of nouveau?" n; then
             GPU_PKGS="nvidia nvidia-utils"
+            NVIDIA_PROPRIETARY=yes
             # kms modules for early modeset
             arch-chroot "$MNT" sed -i 's/^MODULES=(\(.*\))/MODULES=(\1 nvidia nvidia_modeset nvidia_uvm nvidia_drm)/' /etc/mkinitcpio.conf
+            arch-chroot "$MNT" mkinitcpio -P
         fi
     fi
     # shellcheck disable=SC2086
