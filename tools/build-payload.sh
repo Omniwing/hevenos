@@ -6,6 +6,7 @@ shopt -s nullglob
 # Usage: build-payload <source.tar.gz> <output.tar.gz>
 build_payload() {
     local src="$1" out="$2"
+    [[ "$out" = /* ]] || out="$PWD/$out"
     local work root
     work="$(mktemp -d)"; root="$work/root"
     mkdir -p "$root"
