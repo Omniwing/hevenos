@@ -36,7 +36,7 @@ The installer will:
 4. **Install packages**: Core desktop packages (niri, waybar, kitty, fish, swaybg, mako, swayidle) and optional lists:
    - `fonts-extra`: Additional font packages for extended Unicode/glyph coverage.
    - `security-tools`: General security utilities (e.g., cryptographic tools, network analysis).
-   - `asus`: ASUS-specific drivers and utilities (laptop-specific; enabled via marker file).
+   - `asus`: ASUS-specific drivers and utilities (AUR packages; installed in Stage 2 if selected).
 5. **Configure bootloader**: systemd-boot on UEFI systems, GRUB (i386-pc) on BIOS systems.
 6. **Enable services**: NetworkManager, wpa_supplicant, chrony, Bluetooth, acpid; disable iwd to avoid conflicts.
 7. **Deploy config**: Extract the desktop environment tarball, adjust hardcoded paths if the username differs from `omniwing`, and set fish as the login shell.
@@ -55,7 +55,7 @@ This will:
 
 1. **Bootstrap paru**: Install the prebuilt `paru-bin` AUR helper (source builds of paru take hours on older hardware).
 2. **Install AUR packages**: Install packages from `packages/aur.txt`.
-3. **Install optional AUR packages**: If `fonts-extra` or `asus` were selected during Stage 1, install their respective AUR lists.
+3. **Install optional AUR packages**: If `asus` was selected during Stage 1, install AUR packages from `packages/optional/asus.txt`.
 4. **Install Broadcom WiFi drivers**: If Broadcom wireless was detected, install `broadcom-wl-dkms`.
 5. **Refresh font cache**: Rebuild the font cache for newly installed fonts.
 
@@ -69,9 +69,9 @@ niri
 
 During installation, you will be prompted to optionally install:
 
-- **`fonts-extra`**: Extended font coverage. Marker file: `.hevenos-fonts-extra` (sets flag for Stage 2 if selected).
-- **`security-tools`**: Security and cryptography utilities. Marker file: `.hevenos-security-tools`.
-- **`asus`**: ASUS laptop-specific tools and drivers. Marker file: `.hevenos-asus` (Stage 2 uses this to install optional ASUS packages).
+- **`fonts-extra`**: Extended font coverage (native-repo packages, installed fully in Stage 1; no Stage 2 involvement).
+- **`security-tools`**: Security and cryptography utilities (native-repo packages, installed fully in Stage 1; no Stage 2 involvement).
+- **`asus`**: ASUS laptop-specific tools and drivers (AUR packages). Marker file: `.hevenos-asus` (Stage 2 uses this to install optional ASUS AUR packages).
 
 Broadcom WiFi detection is automatic; if present, Stage 2 will offer to install `broadcom-wl-dkms`.
 
@@ -108,21 +108,24 @@ The `tools/build-payload.sh` script regenerates the deployment tarball from a so
 Run the full static test suite:
 
 ```bash
-bash -n ./*.sh lib/*.sh tools/*.sh   # Syntax check
-bash tests/run.sh                     # Unit tests
+shellcheck ./*.sh lib/*.sh tools/*.sh && bash tests/run.sh   # Static checks (shellcheck) + unit tests
 ```
 
-Expected: All syntax checks pass, 105 tests passed, 0 failed.
+Note: `shellcheck` should be installed (e.g. via `pacman -S shellcheck` on Arch, or your distro's package manager elsewhere). For a syntax-only check without shellcheck, use `bash -n ./*.sh lib/*.sh tools/*.sh` as a fallback.
+
+Expected: All static checks pass, 105 tests passed, 0 failed.
 
 ## VM Validation Ladder
 
 Before deploying to real hardware, validate the installer across the following environments in order:
 
-1. **Static checks**: Bash syntax validation and unit tests.
+1. **Static checks**: Bash style/syntax validation (shellcheck) and unit tests.
    ```bash
-   bash -n ./*.sh lib/*.sh tools/*.sh && bash tests/run.sh
+   shellcheck ./*.sh lib/*.sh tools/*.sh && bash tests/run.sh
    ```
-   Expected: Syntax clean; all 105 tests pass.
+   Note: Install `shellcheck` if not available (e.g. `pacman -S shellcheck` on Arch). For syntax-only checks without it, use `bash -n ./*.sh lib/*.sh tools/*.sh` as a fallback.
+   
+   Expected: All checks pass; all 105 tests pass.
 
 2. **Detect smoke test**: Verify hardware detection on each target VM or host.
    ```bash
