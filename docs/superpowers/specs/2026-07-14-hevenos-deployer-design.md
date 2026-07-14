@@ -46,19 +46,35 @@ honest entry point.
 
 ## Blocking prep task (one-time, before first push)
 
-The source tarball contains a **live `OPENAI_API_KEY`** in
-`.config/fish/fish_variables` and a leftover atomic-write temp file
-(`fish_variablescV1lM2c1Kr`).
+The source tarball carries AI tooling and a live credential that must not enter
+the repo. All of it is bundled *state*, not packages — no pacman/AUR entry in
+the lists is AI-specific, so nothing is cut from `core.txt`/`aur.txt`.
+`terminalgpt` and Claude Code were pipx/native-installer tools; they can be
+reinstalled by hand later.
 
-1. Extract the source tarball, delete the temp file, strip the
-   `SETUVAR --export OPENAI_API_KEY:...` line from `fish_variables`.
-2. Rebuild `desktop-env.tar.gz` (`cd ~; tar czf ...` with relative paths, per
-   project convention — never `-C $HOME`).
-3. **Rotate the OpenAI key** out-of-band regardless — it has already lived on a
-   USB stick and in another user's home directory.
+Rebuild `desktop-env.tar.gz` from a cleaned extraction, removing:
 
-The repo must never contain the live key. Verify with
-`grep -r OPENAI_API_KEY payload/` returning nothing after rebuild.
+1. The **live `OPENAI_API_KEY`** — strip the
+   `SETUVAR --export OPENAI_API_KEY:...` line from
+   `.config/fish/fish_variables`.
+2. `.local/bin/claude` — dangling symlink to omniwing's Claude Code install.
+3. `.local/bin/terminalgpt` — dangling symlink to a pipx OpenAI CLI (the
+   consumer of the key above).
+4. `.config/fish/fish_variablescV1lM2c1Kr` — leftover atomic-write temp file.
+
+Then rebuild (`cd ~; tar czf ...` with relative paths, per project convention —
+never `-C $HOME`). **Rotate the OpenAI key** out-of-band regardless — it has
+already lived on a USB stick and in another user's home directory.
+
+Verified clean when, against the rebuilt tarball:
+`tar xzf ... -O` / `grep -r OPENAI_API_KEY` finds nothing, and
+`.local/bin/{claude,terminalgpt}` are absent.
+
+Note (not AI, flagged separately): `.local/bin/` also vendors `uv` + `uvx`
+(~60 MB of the extracted tree). They are general Python tooling, not AI-only,
+so they stay by default — but they dominate tarball size and could be dropped
+(reinstallable via pacman/`paru`) if a leaner payload is wanted. Decision
+deferred; currently kept.
 
 ## Stage 1 — `install.sh`
 
