@@ -1,0 +1,9 @@
+aircrack-ng
+hashcat
+hcxdumptool
+hcxtools
+hostapd
+macchanger
+netdiscover
+python-scapy
+termshark

@@ -1,0 +1,3 @@
+asusctl
+asusctl-debug
+rog-control-center
