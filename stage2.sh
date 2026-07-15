@@ -5,6 +5,20 @@ set -euo pipefail
 HOME_DIR="$HOME"
 PKGS="$HOME_DIR/hevenos/packages"
 
+wait_for_network() {
+    # Runs automatically right at login, before NetworkManager may have
+    # finished resolving DNS on slower hardware. Poll for real resolution
+    # rather than a fixed sleep, so this adapts to however long this
+    # particular boot actually takes instead of guessing a delay.
+    local i
+    for i in $(seq 1 30); do
+        getent hosts aur.archlinux.org >/dev/null 2>&1 && return 0
+        [[ $i -eq 1 ]] && echo ":: Waiting for network..."
+        sleep 2
+    done
+    echo ":: Network still not ready after 60s; continuing anyway (may fail)." >&2
+}
+
 bootstrap_paru() {
     if command -v paru >/dev/null 2>&1; then return 0; fi
     echo ":: Bootstrapping paru-bin (prebuilt; source paru compiles Rust for hours)"
@@ -20,6 +34,7 @@ install_aur() { # list
 }
 
 main() {
+    wait_for_network
     bootstrap_paru
     install_aur "$PKGS/aur.txt"
     [[ -f "$HOME_DIR/.hevenos-asus" ]] && install_aur "$PKGS/optional/asus.txt"
@@ -29,6 +44,10 @@ main() {
     fi
     fc-cache -f || true
     echo ":: Done — type 'niri' to start the desktop."
+    # Revoke the temporary passwordless sudo stage 1 granted for this
+    # unattended build window (see install.sh's handoff()) as the very
+    # last action, using the access it's about to remove.
+    sudo rm -f /etc/sudoers.d/99-hevenos-stage2
     rm -f "$HOME_DIR/stage2.sh"
 }
 main

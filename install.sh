@@ -253,6 +253,17 @@ handoff() {
     cp "$HERE/packages/optional/asus.txt" "$MNT/home/$HEVENOS_USER/hevenos/packages/optional/"
     [[ "$BROADCOM" == yes ]] && touch "$MNT/home/$HEVENOS_USER/.hevenos-broadcom"
     arch-chroot "$MNT" chown -R "$HEVENOS_USER:$HEVENOS_USER" "/home/$HEVENOS_USER"
+
+    # Temporary passwordless sudo for the stage-2 AUR build window only.
+    # makepkg -si calls sudo internally; stage2.sh runs unattended right
+    # at login, so a password prompt with nobody there to answer it just
+    # times out and kills the whole run. stage2.sh revokes this itself as
+    # its last action on success — everyday sudo stays password-protected
+    # once setup is actually done.
+    cat > "$MNT/etc/sudoers.d/99-hevenos-stage2" <<EOF
+$HEVENOS_USER ALL=(ALL:ALL) NOPASSWD: ALL
+EOF
+    chmod 0440 "$MNT/etc/sudoers.d/99-hevenos-stage2"
     say "Stage 1 complete."
     printf '\033[1;31mSETUP IS NOT COMPLETE.\033[0m\n' >&2
     printf '\033[1;31mDo not remove the USB drive yet.\033[0m\n' >&2
