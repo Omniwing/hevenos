@@ -54,10 +54,17 @@ base_install() {
 }
 
 configure_system() {
+    say "A few questions coming up. Answer each one, or just hit Enter to accept the default shown in [brackets]."
+
+    local hostnames=(meadow pebble willow comet hazel cricket breeze acorn lumen thistle sprout marigold)
+    local usernames=(biscuit clover marble pixel waffle peanut ziggy mochi nova juniper ember momo)
+    local default_host="${hostnames[RANDOM % ${#hostnames[@]}]}"
+    local default_user="${usernames[RANDOM % ${#usernames[@]}]}"
+
     local host tz user
-    host="$(ask_default 'Hostname' 'archbox')"
+    host="$(ask_default 'Hostname' "$default_host")"
     tz="$(ask_default 'Timezone (Region/City)' 'America/New_York')"
-    user="$(ask_default 'Username' 'omniwing')"
+    user="$(ask_default 'Username' "$default_user")"
     say "Set the ROOT password:"; local rootpw; rootpw="$(_read_secret)"
     say "Set the password for $user:"; local userpw; userpw="$(_read_secret)"
 
