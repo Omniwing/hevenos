@@ -35,6 +35,10 @@ install_aur() { # list
 
 main() {
     wait_for_network
+    # Full upgrade before touching AUR: real time may have passed since
+    # stage 1 (reboot, walking away), and a prebuilt paru-bin binary needs
+    # the system's libalpm to actually match what it was linked against.
+    sudo pacman -Syu --noconfirm
     bootstrap_paru
     install_aur "$PKGS/aur.txt"
     [[ -f "$HOME_DIR/.hevenos-asus" ]] && install_aur "$PKGS/optional/asus.txt"

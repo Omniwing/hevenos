@@ -165,7 +165,11 @@ install_list() { # path-to-list  label
 }
 
 install_packages() {
-    arch-chroot "$MNT" pacman -Sy --noconfirm
+    # Full upgrade, not just a database sync: pacstrap's own pacman/libalpm
+    # can lag behind by the time stage 2 tries to run a prebuilt paru-bin
+    # binary against it, causing an ABI mismatch (libalpm.so.N not found).
+    # Arch's own guidance is to never partial-upgrade a system.
+    arch-chroot "$MNT" pacman -Syu --noconfirm
     : > "$MNT/root/missing.txt"
     install_list "$HERE/packages/core.txt" "core desktop"
 
