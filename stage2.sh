@@ -7,16 +7,29 @@ PKGS="$HOME_DIR/hevenos/packages"
 
 wait_for_network() {
     # Runs automatically right at login, before NetworkManager may have
-    # finished resolving DNS on slower hardware. Poll for real resolution
-    # rather than a fixed sleep, so this adapts to however long this
-    # particular boot actually takes instead of guessing a delay.
+    # finished resolving DNS on slower hardware — or before it has any
+    # saved network to connect to at all (e.g. wifi that wasn't migrated
+    # from the live ISO; see install.sh's migrate_wifi_credentials). Poll
+    # for real resolution rather than a fixed sleep, so this adapts to
+    # however long this particular boot actually takes.
     local i
-    for i in $(seq 1 30); do
+    for i in $(seq 1 8); do   # ~15s
         getent hosts aur.archlinux.org >/dev/null 2>&1 && return 0
         [[ $i -eq 1 ]] && echo ":: Waiting for network..."
         sleep 2
     done
-    echo ":: Network still not ready after 60s; continuing anyway (may fail)." >&2
+
+    if command -v nmtui >/dev/null 2>&1; then
+        echo ":: No network yet. Opening the network manager — pick your wifi"
+        echo ":: network, connect, then exit (Esc or q) to continue setup."
+        nmtui
+    fi
+
+    for i in $(seq 1 30); do   # another ~60s after nmtui returns
+        getent hosts aur.archlinux.org >/dev/null 2>&1 && return 0
+        sleep 2
+    done
+    echo ":: Network still not ready; continuing anyway (may fail)." >&2
 }
 
 install_aur_pkg() { # pkgname

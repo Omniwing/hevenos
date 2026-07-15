@@ -139,6 +139,53 @@ enable_services() {
     arch-chroot "$MNT" systemctl disable iwd 2>/dev/null || true
 }
 
+migrate_wifi_credentials() {
+    # The Arch live ISO connects to wifi via iwd (iwctl), not
+    # NetworkManager — those saved credentials never make it onto the
+    # target otherwise, so it boots with zero known networks even though
+    # the live session connected fine. Migrate any saved iwd profile
+    # directly into NetworkManager's keyfile format so the target can
+    # auto-connect immediately on first real boot, same as ethernet
+    # already does with no extra step. Only covers WPA/WPA2-personal
+    # (iwd's .psk profiles) — the common case; anything else (enterprise
+    # wifi, open networks) falls through to stage2.sh's nmtui fallback.
+    shopt -s nullglob
+    local profile ssid key uuid found=0
+    for profile in /var/lib/iwd/*.psk; do
+        found=1
+        ssid="$(basename "$profile" .psk)"
+        key="$(awk -F= '/^PreSharedKey=/{print $2; exit}' "$profile")"
+        [[ -n "$key" ]] || key="$(awk -F= '/^Passphrase=/{print $2; exit}' "$profile")"
+        [[ -n "$key" ]] || continue
+        uuid="$(cat /proc/sys/kernel/random/uuid)"
+        mkdir -p "$MNT/etc/NetworkManager/system-connections"
+        cat > "$MNT/etc/NetworkManager/system-connections/$ssid.nmconnection" <<EOF
+[connection]
+id=$ssid
+uuid=$uuid
+type=wifi
+
+[wifi]
+mode=infrastructure
+ssid=$ssid
+
+[wifi-security]
+key-mgmt=wpa-psk
+psk=$key
+
+[ipv4]
+method=auto
+
+[ipv6]
+method=auto
+EOF
+        chmod 600 "$MNT/etc/NetworkManager/system-connections/$ssid.nmconnection"
+        say "Migrated saved wifi network '$ssid' to the installed system"
+    done
+    shopt -u nullglob
+    [[ "$found" == 1 ]] || return 0
+}
+
 setup_swap() {
     if ! needs_swap "$RAM_KB"; then
         say "Enough RAM detected; skipping swapfile"
@@ -296,6 +343,7 @@ main() {
     configure_system
     install_packages
     enable_services
+    migrate_wifi_credentials
     setup_swap
     install_bootloader
     deploy_payload
