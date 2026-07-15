@@ -84,6 +84,7 @@ sed -i 's/^#\(en_US.UTF-8 UTF-8\)/\1/' /etc/locale.gen
 locale-gen
 echo 'LANG=en_US.UTF-8' > /etc/locale.conf
 echo 'KEYMAP=us' > /etc/vconsole.conf
+echo "MAKEFLAGS=\"-j$(nproc)\"" >> /etc/makepkg.conf
 echo '$host' > /etc/hostname
 mkinitcpio -P
 echo 'root:$rootpw' | chpasswd
