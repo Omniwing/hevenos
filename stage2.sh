@@ -43,7 +43,12 @@ install_aur_pkg() { # pkgname
     local pkg="$1"
     pacman -Qi "$pkg" >/dev/null 2>&1 && return 0
     echo ":: Building $pkg from AUR"
-    local tmp; tmp="$(mktemp -d)"
+    # /var/tmp, not /tmp: Arch mounts /tmp as RAM-backed tmpfs by default,
+    # and a build's object files/caches can exhaust that on a low-RAM
+    # machine even with plenty of real disk space free elsewhere
+    # ("no space left on device" despite df showing room). /var/tmp is
+    # always disk-backed.
+    local tmp; tmp="$(mktemp -d --tmpdir=/var/tmp)"
     git clone "https://aur.archlinux.org/$pkg.git" "$tmp/$pkg"
     ( cd "$tmp/$pkg" && makepkg -si --noconfirm )
     rm -rf "$tmp"
