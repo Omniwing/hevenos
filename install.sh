@@ -205,12 +205,19 @@ handoff() {
     arch-chroot "$MNT" chown -R "$HEVENOS_USER:$HEVENOS_USER" "/home/$HEVENOS_USER"
     say "Stage 1 complete."
     printf '\033[1;31mSETUP IS NOT COMPLETE.\033[0m\n' >&2
+    printf '\033[1;31mDo not remove the USB drive yet.\033[0m\n' >&2
     cat >&2 <<EOF
 
-  Reboot now (type: reboot). Pull the USB stick DURING the restart, once
-  the screen goes black — not before. Removing it while this live session
-  is still running can crash it, since the live environment runs from
-  that same USB.
+  Type: reboot
+
+  If your BIOS/boot order defaults to the USB drive, you'll need to pull
+  it so the machine boots the internal disk instead — but only once the
+  screen goes black during the restart, never before. This live session
+  is running FROM that USB; removing it any earlier can crash the system
+  before reboot even starts, forcing you to redo this entire install.
+
+  If the internal disk is already first in the boot order, you don't
+  need to remove the USB at all — it'll just boot past it.
 
   Additional instructions will be provided after reboot.
 EOF
