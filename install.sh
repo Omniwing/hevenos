@@ -103,6 +103,7 @@ _read_secret() { # label
 }
 
 install_bootloader() {
+    say "Installing bootloader ($FIRMWARE)"
     local root_uuid; root_uuid="$(findmnt -no UUID "$MNT")"
     if [[ "$FIRMWARE" == uefi ]]; then
         arch-chroot "$MNT" bootctl install
@@ -126,12 +127,20 @@ EOF
 }
 
 enable_services() {
-    arch-chroot "$MNT" systemctl enable NetworkManager wpa_supplicant chrony bluetooth acpid
+    say "Enabling system services"
+    local svc
+    for svc in NetworkManager wpa_supplicant chrony bluetooth acpid; do
+        arch-chroot "$MNT" systemctl enable "$svc" 2>/dev/null \
+            || warn "Could not enable $svc.service — its package may not have installed (check missing.txt on the target)."
+    done
     arch-chroot "$MNT" systemctl disable iwd 2>/dev/null || true
 }
 
 setup_swap() {
-    needs_swap "$RAM_KB" || return 0
+    if ! needs_swap "$RAM_KB"; then
+        say "Enough RAM detected; skipping swapfile"
+        return 0
+    fi
     say "Low RAM detected; creating 2 GiB swapfile"
     arch-chroot "$MNT" /bin/bash -euo pipefail <<'CHROOT'
 fallocate -l 2G /swapfile || dd if=/dev/zero of=/swapfile bs=1M count=2048
@@ -179,6 +188,7 @@ install_packages() {
 }
 
 deploy_payload() {
+    say "Deploying desktop configuration"
     local home="$MNT/home/$HEVENOS_USER"
     cp "$HERE/payload/desktop-env.tar.gz" "$home/"
     arch-chroot "$MNT" /bin/bash -euo pipefail <<CHROOT
