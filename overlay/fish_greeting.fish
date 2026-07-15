@@ -29,9 +29,19 @@ function fish_greeting --description 'hevenos console login banner'
     set_color normal
     echo
 
+    if test -e ~/stage2.sh
+        set_color --bold yellow
+        echo "  >> Setup isn't finished — finishing it automatically now."
+        echo "  >> This installs AUR packages and can take a while on slow hardware."
+        set_color normal
+        echo
+        ~/stage2.sh
+        echo
+    end
+
     set_color --bold green
     if test -e ~/stage2.sh
-        echo "  >> setup isn't finished yet — run ./stage2.sh, then type 'niri' to start the desktop"
+        echo "  >> automatic setup didn't finish — it will retry at your next login"
     else
         echo "  >> type 'niri' to start the desktop"
     end

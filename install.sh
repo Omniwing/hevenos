@@ -81,10 +81,11 @@ hwclock --systohc || true
 sed -i 's/^#\(en_US.UTF-8 UTF-8\)/\1/' /etc/locale.gen
 locale-gen
 echo 'LANG=en_US.UTF-8' > /etc/locale.conf
+echo 'KEYMAP=us' > /etc/vconsole.conf
 echo '$host' > /etc/hostname
 mkinitcpio -P
 echo 'root:$rootpw' | chpasswd
-id -u '$user' >/dev/null 2>&1 || useradd -m -G wheel -s /usr/bin/fish '$user'
+id -u '$user' >/dev/null 2>&1 || useradd -m -G wheel '$user'
 echo '$user:$userpw' | chpasswd
 sed -i 's/^# %wheel ALL=(ALL:ALL) ALL/%wheel ALL=(ALL:ALL) ALL/' /etc/sudoers
 CHROOT
@@ -129,7 +130,7 @@ EOF
 enable_services() {
     say "Enabling system services"
     local svc
-    for svc in NetworkManager wpa_supplicant chrony bluetooth acpid; do
+    for svc in NetworkManager wpa_supplicant chronyd bluetooth acpid; do
         arch-chroot "$MNT" systemctl enable "$svc" 2>/dev/null \
             || warn "Could not enable $svc.service — its package may not have installed (check missing.txt on the target)."
     done
