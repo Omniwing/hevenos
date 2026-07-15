@@ -1,7 +1,9 @@
 function fish_greeting --description 'hevenos console login banner'
-    # Only greet on the pure VT login, never inside desktop terminals.
+    # Only greet on the pure VT login, never inside a niri-spawned desktop
+    # terminal. WAYLAND_DISPLAY is a more robust signal for "inside niri"
+    # than matching an exact $TERM string, which can vary across hardware.
     status is-login; or return
-    test "$TERM" = linux; or return
+    set -q WAYLAND_DISPLAY; and return
 
     # ASCII-safe hellos only — the Linux console font has no CJK/emoji glyphs.
     set -l hellos Hello Hi Hey Hola Ciao Hej Salut Hallo Ahoy Howdy \

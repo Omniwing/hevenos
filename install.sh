@@ -215,8 +215,34 @@ CHROOT
     install -Dm644 "$HERE/overlay/fish_greeting.fish" \
         "$home/.config/fish/functions/fish_greeting.fish"
     arch-chroot "$MNT" chown -R "$HEVENOS_USER:$HEVENOS_USER" "/home/$HEVENOS_USER/.config"
-    arch-chroot "$MNT" chsh -s /usr/bin/fish "$HEVENOS_USER"
+
+    # Make sure fish is actually registered as a valid login shell before
+    # asking chsh to set it — don't rely solely on fish's own install hook.
+    arch-chroot "$MNT" bash -c "grep -qxF /usr/bin/fish /etc/shells || echo /usr/bin/fish >> /etc/shells"
+    if ! arch-chroot "$MNT" chsh -s /usr/bin/fish "$HEVENOS_USER"; then
+        warn "Could not set fish as the login shell for $HEVENOS_USER — it will log in with the default shell instead."
+    fi
     arch-chroot "$MNT" sudo -u "$HEVENOS_USER" fc-cache -f || true
+
+    # Fallback auto-continue for bash, in case fish never became the login
+    # shell above (or the fish greeting never fires for some other reason
+    # specific to this hardware's console/getty setup) — same behavior,
+    # shell-agnostic, so first-boot setup completion doesn't depend on a
+    # single mechanism.
+    cat >> "$home/.bash_profile" <<'BASHRC'
+
+if [ -e "$HOME/stage2.sh" ] && [ -z "${WAYLAND_DISPLAY:-}" ]; then
+    echo "  >> Setup isn't finished — finishing it automatically now."
+    echo "  >> This installs AUR packages and can take a while on slow hardware."
+    "$HOME/stage2.sh"
+    if [ -e "$HOME/stage2.sh" ]; then
+        echo "  >> automatic setup didn't finish — it will retry at your next login"
+    else
+        echo "  >> type 'niri' to start the desktop"
+    fi
+fi
+BASHRC
+    arch-chroot "$MNT" chown "$HEVENOS_USER:$HEVENOS_USER" "/home/$HEVENOS_USER/.bash_profile"
 }
 
 handoff() {
