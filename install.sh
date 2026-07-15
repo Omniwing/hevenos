@@ -70,8 +70,8 @@ configure_system() {
     host="$(ask_default 'Hostname' "$default_host")"
     tz="$(ask_default 'Timezone (Region/City)' 'America/New_York')"
     user="$(ask_default 'Username' "$default_user")"
-    say "Set the ROOT password:"; local rootpw; rootpw="$(_read_secret)"
-    say "Set the password for $user:"; local userpw; userpw="$(_read_secret)"
+    local rootpw; rootpw="$(_read_secret 'root password')"
+    local userpw; userpw="$(_read_secret "password for $user")"
 
     HEVENOS_USER="$user"   # exported for later steps
 
@@ -92,8 +92,15 @@ CHROOT
     # Username path fix across the (soon-to-be-extracted) config; done post-extract.
 }
 
-_read_secret() { local a b; read -rs a >&2; echo >&2; read -rs b >&2; echo >&2;
-    [[ "$a" == "$b" ]] || die "Passwords did not match."; echo "$a"; }
+_read_secret() { # label
+    local label="$1" a b
+    while true; do
+        printf '  Enter %s: ' "$label" >&2; read -rs a >&2; echo >&2
+        printf '  Confirm %s: ' "$label" >&2; read -rs b >&2; echo >&2
+        [[ "$a" == "$b" ]] && { echo "$a"; return; }
+        warn "Passwords did not match. Try again."
+    done
+}
 
 install_bootloader() {
     local root_uuid; root_uuid="$(findmnt -no UUID "$MNT")"
