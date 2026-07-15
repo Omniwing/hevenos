@@ -46,3 +46,10 @@ needs_swap() {
     local ram_kb="$1" threshold_kb="${2:-2097152}"
     [[ "$ram_kb" -le "$threshold_kb" ]]
 }
+
+is_asus_hardware() {
+    # ${1-...}, no colon: an explicitly passed empty string (as tests do)
+    # must NOT fall through to the live probe — only an omitted arg should.
+    local vendor="${1-$(cat /sys/class/dmi/id/sys_vendor 2>/dev/null || true)}"
+    grep -qi 'asus' <<<"$vendor"
+}

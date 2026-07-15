@@ -48,3 +48,11 @@ test_needs_swap() {
     assert_false needs_swap 8388608          # 8 GiB
     assert_true  needs_swap 4194304 8388608  # custom threshold
 }
+
+test_is_asus_hardware() {
+    assert_true  is_asus_hardware "ASUSTeK COMPUTER INC."
+    assert_true  is_asus_hardware "asus"
+    assert_false is_asus_hardware "Hewlett-Packard"
+    assert_false is_asus_hardware "Dell Inc."
+    assert_false is_asus_hardware ""
+}

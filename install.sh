@@ -17,6 +17,7 @@ detect_all() {
     RAM_KB="$(awk '/MemTotal/{print $2; exit}' /proc/meminfo)"
     if has_broadcom_wifi "$(lspci 2>/dev/null; lsusb 2>/dev/null)"; then
         BROADCOM=yes; else BROADCOM=no; fi
+    if is_asus_hardware; then ASUS=yes; else ASUS=no; fi
     ROOT_SRC="$(findmnt -no SOURCE "$MNT" 2>/dev/null || echo '?')"
     DISK="/dev/$(lsblk -no PKNAME "$ROOT_SRC" 2>/dev/null | head -1 || true)"
 }
@@ -28,6 +29,7 @@ print_detection() {
   gpu      : $GPU  ->  $GPU_PKGS
   ram (kB) : $RAM_KB  (swap: $(needs_swap "$RAM_KB" && echo yes || echo no))
   broadcom : $BROADCOM
+  asus     : $ASUS
   target   : $MNT on $ROOT_SRC (disk $DISK)
 EOF
 }
@@ -180,12 +182,11 @@ install_packages() {
     # shellcheck disable=SC2086
     arch-chroot "$MNT" pacman -S --needed --noconfirm $GPU_PKGS
 
-    for opt in fonts-extra security-tools asus; do
-        if ask_yes_no "Install optional list '$opt'?" n; then
-            install_list "$HERE/packages/optional/$opt.txt" "$opt"
-            [[ "$opt" == asus ]] && touch "$MNT/home/$HEVENOS_USER/.hevenos-asus"
-        fi
-    done
+    if [[ "$ASUS" == yes ]]; then
+        say "ASUS hardware detected — installing asus packages"
+        install_list "$HERE/packages/optional/asus.txt" "asus"
+        touch "$MNT/home/$HEVENOS_USER/.hevenos-asus"
+    fi
 }
 
 deploy_payload() {
