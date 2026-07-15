@@ -1,4 +1,6 @@
-battop
-byobu
-elio
-ipscan-bin
+# Intentionally empty: only OS/chipset-driver/GUI-essential packages are
+# auto-installed. Personal utility tools (battop, byobu, elio, ipscan-bin)
+# were removed — none are OS/driver/GUI-critical, and Rust-based ones
+# (battop) cost a real compile with a large transitive crate tree for a
+# "nice to have" tool. Add lines here (one package name per line) if you
+# want something installed automatically during stage 2.

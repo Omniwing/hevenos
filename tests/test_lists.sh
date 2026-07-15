@@ -30,8 +30,9 @@ test_optional_lists_content() {
 }
 
 test_aur_curation() {
-    for p in battop byobu ipscan-bin elio; do assert_true _has packages/aur.txt "$p"; done
-    for p in neofetch-git asusctl rog-control-center; do
+    # aur.txt is intentionally empty: only OS/chipset-driver/GUI-essential
+    # packages are auto-installed, and none of these are that.
+    for p in battop byobu ipscan-bin elio neofetch-git asusctl rog-control-center; do
         assert_false _has packages/aur.txt "$p"
     done
 }
