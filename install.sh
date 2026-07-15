@@ -204,11 +204,15 @@ handoff() {
     [[ "$BROADCOM" == yes ]] && touch "$MNT/home/$HEVENOS_USER/.hevenos-broadcom"
     arch-chroot "$MNT" chown -R "$HEVENOS_USER:$HEVENOS_USER" "/home/$HEVENOS_USER"
     say "Stage 1 complete."
+    printf '\033[1;31mSETUP IS NOT COMPLETE.\033[0m\n' >&2
     cat >&2 <<EOF
 
-  Reboot, remove install media, log in as $HEVENOS_USER, then:
-      ./stage2.sh        # installs AUR packages
-      niri               # starts the desktop
+  Reboot now (type: reboot). Pull the USB stick DURING the restart, once
+  the screen goes black — not before. Removing it while this live session
+  is still running can crash it, since the live environment runs from
+  that same USB.
+
+  Additional instructions will be provided after reboot.
 EOF
 }
 

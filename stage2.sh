@@ -29,5 +29,6 @@ main() {
     fi
     fc-cache -f || true
     echo ":: Done — type 'niri' to start the desktop."
+    rm -f "$HOME_DIR/stage2.sh"
 }
 main

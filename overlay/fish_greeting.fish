@@ -30,7 +30,11 @@ function fish_greeting --description 'hevenos console login banner'
     echo
 
     set_color --bold green
-    echo "  >> type 'niri' to start the desktop"
+    if test -e ~/stage2.sh
+        echo "  >> setup isn't finished yet — run ./stage2.sh, then type 'niri' to start the desktop"
+    else
+        echo "  >> type 'niri' to start the desktop"
+    end
     set_color normal
     echo
 end
