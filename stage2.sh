@@ -19,51 +19,42 @@ wait_for_network() {
     echo ":: Network still not ready after 60s; continuing anyway (may fail)." >&2
 }
 
-bootstrap_paru() {
-    # A functional check, not just "does the file exist": paru-bin is a
-    # prebuilt binary from the AUR, linked against whatever libalpm its
-    # maintainer's machine had at build time. If the AUR package lags
-    # behind Arch's current libalpm SONAME (outside our control — we
-    # don't control that maintainer's rebuild cadence), the installed
-    # binary exists but fails to even start. `command -v` alone can't
-    # see that, and would wrongly treat a known-broken paru as "already
-    # bootstrapped" on every retry, forever.
-    paru --version >/dev/null 2>&1 && return 0
-
-    echo ":: Bootstrapping paru-bin (prebuilt; source paru compiles Rust for hours)"
+install_aur_pkg() { # pkgname
+    # No AUR helper: paru/yay are prebuilt binaries dynamically linked
+    # against a specific libalpm SONAME, and staleness on the maintainer's
+    # end (outside our control) causes hard-to-fix runtime breakage. We
+    # only ever install a small, fixed, hand-picked package list — plain
+    # makepkg (part of base-devel, a bash script, no ABI of its own to go
+    # stale) is all that's actually needed, and it's what an AUR helper
+    # calls internally anyway.
+    local pkg="$1"
+    pacman -Qi "$pkg" >/dev/null 2>&1 && return 0
+    echo ":: Building $pkg from AUR"
     local tmp; tmp="$(mktemp -d)"
-    git clone https://aur.archlinux.org/paru-bin.git "$tmp/paru-bin"
-    ( cd "$tmp/paru-bin" && makepkg -si --noconfirm )
+    git clone "https://aur.archlinux.org/$pkg.git" "$tmp/$pkg"
+    ( cd "$tmp/$pkg" && makepkg -si --noconfirm )
     rm -rf "$tmp"
-
-    paru --version >/dev/null 2>&1 && return 0
-
-    echo ":: paru-bin doesn't run on this system (likely a stale prebuilt binary vs. the current libalpm)." >&2
-    echo ":: Falling back to building paru from source — this can take a long time on slow hardware." >&2
-    sudo pacman -R --noconfirm paru-bin 2>/dev/null || true
-    local tmp2; tmp2="$(mktemp -d)"
-    git clone https://aur.archlinux.org/paru.git "$tmp2/paru"
-    ( cd "$tmp2/paru" && makepkg -si --noconfirm )
-    rm -rf "$tmp2"
 }
 
-install_aur() { # list
+install_aur_list() { # path-to-list
     [[ -f "$1" ]] || return 0
-    paru -S --needed --noconfirm - < "$1"
+    local pkg
+    while IFS= read -r pkg; do
+        [[ -z "$pkg" || "$pkg" == \#* ]] && continue
+        install_aur_pkg "$pkg"
+    done < "$1"
 }
 
 main() {
     wait_for_network
-    # Full upgrade before touching AUR: real time may have passed since
-    # stage 1 (reboot, walking away), and a prebuilt paru-bin binary needs
-    # the system's libalpm to actually match what it was linked against.
+    # Full upgrade before building anything: real time may have passed
+    # since stage 1 (reboot, walking away).
     sudo pacman -Syu --noconfirm
-    bootstrap_paru
-    install_aur "$PKGS/aur.txt"
-    [[ -f "$HOME_DIR/.hevenos-asus" ]] && install_aur "$PKGS/optional/asus.txt"
+    install_aur_list "$PKGS/aur.txt"
+    [[ -f "$HOME_DIR/.hevenos-asus" ]] && install_aur_list "$PKGS/optional/asus.txt"
     if [[ -f "$HOME_DIR/.hevenos-broadcom" ]]; then
         echo ":: Broadcom wifi detected; installing broadcom-wl-dkms"
-        paru -S --needed --noconfirm broadcom-wl-dkms
+        install_aur_pkg broadcom-wl-dkms
     fi
     fc-cache -f || true
     echo ":: Done — type 'niri' to start the desktop."

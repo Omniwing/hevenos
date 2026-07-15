@@ -53,10 +53,10 @@ After first boot, log in as the regular user (created during Stage 1) and run:
 
 This will:
 
-1. **Bootstrap paru**: Install the prebuilt `paru-bin` AUR helper (source builds of paru take hours on older hardware).
-2. **Install AUR packages**: Install packages from `packages/aur.txt`.
-3. **Install optional AUR packages**: If `asus` was selected during Stage 1, install AUR packages from `packages/optional/asus.txt`.
-4. **Install Broadcom WiFi drivers**: If Broadcom wireless was detected, install `broadcom-wl-dkms`.
+1. **Wait for network**: poll for real DNS resolution rather than assuming it's ready immediately at login.
+2. **Install AUR packages**: build and install each package in `packages/aur.txt` directly with `makepkg` — no AUR helper. We only ever install a small, fixed, hand-picked list, so paru/yay's extra convenience isn't needed, and it avoids the class of bug where a prebuilt AUR-helper binary is linked against a `libalpm` version that's since moved on.
+3. **Install optional AUR packages**: If `asus` was selected during Stage 1, build and install packages from `packages/optional/asus.txt` the same way.
+4. **Install Broadcom WiFi drivers**: If Broadcom wireless was detected, build and install `broadcom-wl-dkms`.
 5. **Refresh font cache**: Rebuild the font cache for newly installed fonts.
 
 After Stage 2 completes, start the desktop:
