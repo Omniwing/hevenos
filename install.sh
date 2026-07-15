@@ -39,6 +39,9 @@ preflight() {
         mountpoint -q "$MNT/boot" || die "UEFI: mount the ESP at $MNT/boot before running (avoids kernel shadowing)."
     fi
     ping -c1 -W3 archlinux.org >/dev/null 2>&1 || warn "Network check failed; continuing but pacstrap may fail."
+    if [[ "$FIRMWARE" == bios ]]; then
+        [[ -b "$DISK" ]] || die "Could not determine a valid disk for GRUB (got '$DISK'). Check that $MNT is mounted on a real partition, then rerun."
+    fi
     say "Target disk for bootloader: $DISK"
     ask_yes_no "Install bootloader to $DISK?" y || die "Aborted at disk confirmation."
 }
@@ -47,9 +50,11 @@ base_install() {
     say "Refreshing package databases"
     pacman -Sy --noconfirm
     say "pacstrap base system + microcode ($UCODE)"
+    local bootloader_pkg=""
+    [[ "$FIRMWARE" == bios ]] && bootloader_pkg="grub"
     # shellcheck disable=SC2086
     pacstrap "$MNT" base base-devel linux linux-firmware linux-headers \
-        git networkmanager wpa_supplicant sudo vim nano $UCODE
+        git networkmanager wpa_supplicant sudo vim nano $UCODE $bootloader_pkg
     genfstab -U "$MNT" >> "$MNT/etc/fstab"
 }
 
