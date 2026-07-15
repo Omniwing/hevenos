@@ -20,12 +20,31 @@ wait_for_network() {
 }
 
 bootstrap_paru() {
-    if command -v paru >/dev/null 2>&1; then return 0; fi
+    # A functional check, not just "does the file exist": paru-bin is a
+    # prebuilt binary from the AUR, linked against whatever libalpm its
+    # maintainer's machine had at build time. If the AUR package lags
+    # behind Arch's current libalpm SONAME (outside our control — we
+    # don't control that maintainer's rebuild cadence), the installed
+    # binary exists but fails to even start. `command -v` alone can't
+    # see that, and would wrongly treat a known-broken paru as "already
+    # bootstrapped" on every retry, forever.
+    paru --version >/dev/null 2>&1 && return 0
+
     echo ":: Bootstrapping paru-bin (prebuilt; source paru compiles Rust for hours)"
     local tmp; tmp="$(mktemp -d)"
     git clone https://aur.archlinux.org/paru-bin.git "$tmp/paru-bin"
     ( cd "$tmp/paru-bin" && makepkg -si --noconfirm )
     rm -rf "$tmp"
+
+    paru --version >/dev/null 2>&1 && return 0
+
+    echo ":: paru-bin doesn't run on this system (likely a stale prebuilt binary vs. the current libalpm)." >&2
+    echo ":: Falling back to building paru from source — this can take a long time on slow hardware." >&2
+    sudo pacman -R --noconfirm paru-bin 2>/dev/null || true
+    local tmp2; tmp2="$(mktemp -d)"
+    git clone https://aur.archlinux.org/paru.git "$tmp2/paru"
+    ( cd "$tmp2/paru" && makepkg -si --noconfirm )
+    rm -rf "$tmp2"
 }
 
 install_aur() { # list
