@@ -29,10 +29,15 @@ AMD/NVIDIA silicon from 2007 onward. Two package choices drive this floor:
 Preflight detects the known below-floor GPUs — Intel gen2/gen3 integrated
 graphics (through Pineview / GMA 3150, the 2008–2010 Atom netbook line) and
 the PowerVR-based GMA 500/600/3600 line, which has no usable 3D driver at
-all — and refuses to continue unless you explicitly confirm an unsupported
-install. Both PCI-ID sets are closed (taken verbatim from the kernel's own
-tables), so the check never needs maintenance. Everything x86_64 above that
-floor is fair game.
+all — and offers an **Xfce-on-X11 fallback desktop** instead of niri
+(`packages/fallback-x11.txt`; proven on the GMA 3150). Accept the prompt, or
+run `./install.sh --force` to accept it unprompted. Declining aborts before
+any disk write. On fallback installs the desktop starts with `startx` (a
+`.hevenos-x11` marker file makes stage 2 and the login banner say so), and
+the full config payload still deploys — fish theming and fonts carry over;
+the wayland pieces stay dormant. Both PCI-ID sets are closed (taken verbatim
+from the kernel's own tables), so the check never needs maintenance.
+Everything x86_64 above that floor is fair game.
 
 ## Stage 1: Live ISO Installation
 
@@ -82,7 +87,7 @@ This will:
 After Stage 2 completes, start the desktop:
 
 ```bash
-niri
+niri     # or: startx   (on below-floor/X11-fallback installs)
 ```
 
 ## Optional Package Lists

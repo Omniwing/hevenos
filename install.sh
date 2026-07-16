@@ -7,6 +7,8 @@ source "$HERE/lib/packages.sh"
 
 MNT="${HEVENOS_MNT:-/mnt}"
 NVIDIA_PROPRIETARY=""   # set to "yes" in collect_config if chosen; read by install_packages/install_bootloader
+FORCE=""                # set by --force: accept the below-floor X11 fallback without prompting
+X11_FALLBACK=""         # set in preflight when GL_FLOOR=below and the fallback is accepted
 
 detect_all() {
     is_x86_64 || die "This machine is not x86_64; mainline Arch is x86_64-only."
@@ -45,10 +47,14 @@ preflight() {
     fi
     ping -c1 -W3 archlinux.org >/dev/null 2>&1 || warn "Network check failed; continuing but pacstrap may fail."
     if [[ "$GL_FLOOR" == below ]]; then
-        warn "This GPU is below the desktop's hardware floor: it tops out at OpenGL 2.1 (or has no 3D driver at all)."
-        warn "kitty requires OpenGL 3.3 and niri's theme shaders exceed this chip's limits — the hevenos desktop cannot work as designed here."
-        ask_yes_no "Install anyway, knowing the desktop is unsupported on this GPU?" n \
-            || die "Aborted: GPU below the supported floor (OpenGL 3.3-class needed — roughly Intel HD 3000 / 2011 or newer; see README)."
+        warn "This GPU is below the niri desktop's hardware floor: it tops out at OpenGL 2.1 (or has no 3D driver at all)."
+        warn "kitty requires OpenGL 3.3 and niri's theme shaders exceed this chip's limits — but an Xfce-on-X11 fallback works well on this class of hardware."
+        if [[ "$FORCE" == yes ]] || ask_yes_no "Install the Xfce/X11 fallback desktop instead of niri?" n; then
+            X11_FALLBACK=yes
+            say "Below-floor GPU: the desktop will be Xfce on X11 (started with 'startx')."
+        else
+            die "Aborted: GPU below the supported floor (OpenGL 3.3-class needed — roughly Intel HD 3000 / 2011 or newer; see README). Rerun with --force to accept the Xfce/X11 fallback unprompted."
+        fi
     fi
     if [[ "$FIRMWARE" == bios ]]; then
         [[ -b "$DISK" ]] || die "Could not determine a valid disk for GRUB (got '$DISK'). Check that $MNT is mounted on a real partition, then rerun."
@@ -170,6 +176,22 @@ configure_keyd() {
     install -Dm644 "$HERE/overlay/keyd-default.conf" "$MNT/etc/keyd/default.conf"
 }
 
+configure_x11_fallback() {
+    # Below-floor GPU path: Xfce on X11 instead of niri. The niri/kitty
+    # payload still deploys (fish theme, fonts, scripts all remain useful);
+    # the wayland bits simply sit dormant. Marker file .hevenos-x11 tells
+    # stage2.sh and the login banner to say 'startx' instead of 'niri'.
+    [[ "$X11_FALLBACK" == yes ]] || return 0
+    say "Configuring the X11 fallback desktop (Xfce via startx)"
+    local home="$MNT/home/$HEVENOS_USER"
+    echo 'exec startxfce4' > "$home/.xinitrc"
+    touch "$home/.hevenos-x11"
+    sed -i "s/type 'niri' to start the desktop/type 'startx' to start the desktop/" \
+        "$home/.bash_profile"
+    arch-chroot "$MNT" chown "$HEVENOS_USER:$HEVENOS_USER" \
+        "/home/$HEVENOS_USER/.xinitrc" "/home/$HEVENOS_USER/.hevenos-x11"
+}
+
 migrate_wifi_credentials() {
     # The Arch live ISO connects to wifi via iwd (iwctl), not
     # NetworkManager — those saved credentials never make it onto the
@@ -250,6 +272,9 @@ install_packages() {
     arch-chroot "$MNT" pacman -Syu --noconfirm
     : > "$MNT/root/missing.txt"
     install_list "$HERE/packages/core.txt" "core desktop"
+    if [[ "$X11_FALLBACK" == yes ]]; then
+        install_list "$HERE/packages/fallback-x11.txt" "x11 fallback desktop"
+    fi
 
     say "Graphics: $GPU"
     if [[ "${NVIDIA_PROPRIETARY:-}" == yes ]]; then
@@ -377,10 +402,12 @@ main() {
     setup_swap
     install_bootloader
     deploy_payload
+    configure_x11_fallback
     handoff
 }
 
 case "${1:-}" in
     --detect) detect_all; print_detection ;;
+    --force)  FORCE=yes; main ;;
     *)        main ;;
 esac

@@ -1,0 +1,20 @@
+# X11 fallback desktop for below-GL-floor GPUs (see README "Hardware Floor").
+# Installed only when the operator accepts the fallback prompt or runs
+# ./install.sh --force. Proven configuration: the 2010 HP netbook (GMA 3150)
+# runs this beautifully where the niri/kitty stack cannot.
+#
+# Concrete package names only — pacman groups (e.g. "xfce4") would be
+# filtered out by available_pkgs, which validates against pacman -Slq.
+# xf86-video-intel: gen3's battle-tested driver; on non-Intel below-floor
+# hardware X simply falls back to modesetting, so it is harmless to include.
+xorg-server
+xorg-xinit
+xf86-video-intel
+xfce4-session
+xfwm4
+xfce4-panel
+xfce4-settings
+xfdesktop
+xfce4-terminal
+xfce4-power-manager
+thunar
