@@ -32,7 +32,6 @@ pipewire
 playerctl
 power-profiles-daemon
 powertop
-python-pip
 python-pipx
 rsync
 sof-firmware
