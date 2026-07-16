@@ -2,23 +2,14 @@ _root="$(dirname "${BASH_SOURCE[0]}")/.."
 _has() { grep -qxF "$2" "$_root/$1"; }   # file pkg
 
 test_core_keeps_required() {
-    for p in fish nano vim nmap \
+    for p in niri waybar mako swaybg fuzzel kitty fish nano vim nmap \
              pipewire wireplumber pavucontrol sof-firmware alsa-utils \
              networkmanager wpa_supplicant wireguard-tools bluez \
-             playerctl cmatrix keyd firefox \
+             vulkan-icd-loader swaylock playerctl cmatrix keyd \
+             xdg-desktop-portal xdg-desktop-portal-gtk firefox \
              ttf-jetbrains-mono-nerd ttf-nerd-fonts-symbols \
              ttf-nerd-fonts-symbols-mono; do
         assert_true _has packages/core.txt "$p"
-    done
-}
-
-test_niri_wayland_content() {
-    for p in niri waybar mako swaybg swaylock fuzzel kitty \
-             vulkan-icd-loader wayland wayland-protocols \
-             xdg-desktop-portal xdg-desktop-portal-gtk \
-             xorg-xwayland xwayland-satellite; do
-        assert_true  _has packages/niri-wayland.txt "$p"
-        assert_false _has packages/core.txt "$p"
     done
 }
 

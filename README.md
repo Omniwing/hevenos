@@ -29,15 +29,12 @@ AMD/NVIDIA silicon from 2007 onward. Two package choices drive this floor:
 Preflight detects the known below-floor GPUs — Intel gen2/gen3 integrated
 graphics (through Pineview / GMA 3150, the 2008–2010 Atom netbook line) and
 the PowerVR-based GMA 500/600/3600 line, which has no usable 3D driver at
-all — and offers an **Xfce-on-X11 fallback desktop** instead of niri
-(`packages/fallback-x11.txt`; proven on the GMA 3150). Accept the prompt, or
-run `./install.sh --force` to accept it unprompted. Declining aborts before
-any disk write. On fallback installs the desktop starts with `startx` (a
-`.hevenos-x11` marker file makes stage 2 and the login banner say so), and
-the full config payload still deploys — fish theming and fonts carry over;
-the wayland pieces stay dormant. Both PCI-ID sets are closed (taken verbatim
-from the kernel's own tables), so the check never needs maintenance.
-Everything x86_64 above that floor is fair game.
+all — and **refuses to install**: no disk write happens. There is no
+fallback desktop; this project targets niri/Wayland only. (A separate,
+unrelated project — `legacyheven` — is tracking a lighter, theme-free
+desktop for hardware below this floor; not part of this repo.) Both PCI-ID
+sets are closed (taken verbatim from the kernel's own tables), so the check
+never needs maintenance. Everything x86_64 above that floor is fair game.
 
 ## Stage 1: Live ISO Installation
 
@@ -87,7 +84,7 @@ This will:
 After Stage 2 completes, start the desktop:
 
 ```bash
-niri     # or: startx   (on below-floor/X11-fallback installs)
+niri
 ```
 
 ## Optional Package Lists
@@ -138,7 +135,7 @@ shellcheck ./*.sh lib/*.sh tools/*.sh && bash tests/run.sh   # Static checks (sh
 
 Note: `shellcheck` should be installed (e.g. via `pacman -S shellcheck` on Arch, or your distro's package manager elsewhere). For a syntax-only check without shellcheck, use `bash -n ./*.sh lib/*.sh tools/*.sh` as a fallback.
 
-Expected: All static checks pass, 105 tests passed, 0 failed.
+Expected: All static checks pass, 120 tests passed, 0 failed.
 
 ## VM Validation Ladder
 
@@ -150,7 +147,7 @@ Before deploying to real hardware, validate the installer across the following e
    ```
    Note: Install `shellcheck` if not available (e.g. `pacman -S shellcheck` on Arch). For syntax-only checks without it, use `bash -n ./*.sh lib/*.sh tools/*.sh` as a fallback.
    
-   Expected: All checks pass; all 105 tests pass.
+   Expected: All checks pass; all 120 tests pass.
 
 2. **Detect smoke test**: Verify hardware detection on each target VM or host.
    ```bash

@@ -102,13 +102,26 @@ laptop); a second is in progress (2010-era HP netbook).
   strips atomic KMS from gen3 userspace (`intel_display_device.c`, pre-g4x
   loses DRIVER_ATOMIC), so niri runs smithay's little-tested legacy path,
   where this machine hits a deterministic page-flip EACCES display freeze.
-  `install.sh` now detects below-floor GPUs (Intel gen2/gen3 + PowerVR
-  GMA 500/600/3600) at preflight and refuses unless explicitly overridden.
-- **Netbook stays in service** (owner's decision, 2026-07-16): not retired —
-  repurposed as a light X11 box. Plan: `xorg-server xorg-xinit
-  xf86-video-intel` + Xfce (or Openbox + tint2 + lxterminal for minimal);
-  X11 is gen3's battle-tested path, VTE terminals need no GL, and the
-  existing fish theme + JetBrainsMono Nerd Font carry over.
+  `install.sh` detects below-floor GPUs (Intel gen2/gen3 + PowerVR
+  GMA 500/600/3600) at preflight and now refuses unconditionally — no
+  prompt, no `--force`, no disk write. hevenos targets niri/Wayland only.
+- **X11/Xfce fallback removed from hevenos entirely** (owner's decision,
+  2026-07-16): the fallback desktop (`packages/fallback-x11.txt`,
+  `configure_x11_fallback()`, the `.hevenos-x11` marker, `X11_FALLBACK`/
+  `FORCE`/`--force`) was ripped out of `install.sh`, `stage2.sh`, the login
+  banner, tests, and README — verdict was that shipping a second, lesser
+  desktop as a silent fallback was the wrong shape for this project.
+  `packages/niri-wayland.txt` (a short-lived split from an earlier session)
+  was folded back into `packages/core.txt` since the branch that justified
+  it no longer exists.
+- **Netbook stays in service, but not via hevenos.** Forked into a sibling
+  project, **legacyheven** (`~/legacyheven`, github.com/Omniwing/legacyheven
+  — pre-planning stage only, see that repo's own docs), whose goal is a
+  themeless desktop with the same *behavior* as hevenos (niri-style tiling
+  keybinds — window/column focus and move via arrows+hjkl, workspace nav,
+  consume/expel, resize, `Mod+Return` terminal launch — see
+  `payload/desktop-env.tar.gz`'s `config.kdl` for the exact bind set) on
+  hardware below the OpenGL 3.3 floor. Not yet planned or started.
 - 1–2 GB RAM: add 2 GB swapfile (`fallocate -l 2G /swapfile; chmod 600
   /swapfile; mkswap /swapfile; swapon /swapfile` + fstab entry).
 - Prefer `-bin` AUR variants throughout; Atom-era CPU makes source builds

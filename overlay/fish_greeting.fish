@@ -1,9 +1,7 @@
 function fish_greeting --description 'hevenos console login banner'
     # Only greet on the pure VT login, never inside a desktop terminal.
-    # WAYLAND_DISPLAY covers niri; DISPLAY covers the Xfce/X11 fallback.
     status is-login; or return
     set -q WAYLAND_DISPLAY; and return
-    set -q DISPLAY; and return
 
     # Armbian/Orange-Pi-style MOTD: figlet header, welcome line, then a
     # two-column live stats grid (14-char labels, green values). ASCII-safe
@@ -62,8 +60,6 @@ function fish_greeting --description 'hevenos console login banner'
     set_color --bold green
     if test -e ~/stage2.sh
         echo ">> automatic setup didn't finish — it will retry at your next login"
-    else if test -e ~/.hevenos-x11
-        echo ">> type 'startx' to start the desktop"
     else
         echo ">> type 'niri' to start the desktop"
     end

@@ -75,11 +75,7 @@ main() {
         install_aur_pkg broadcom-wl-dkms
     fi
     fc-cache -f || true
-    if [[ -f "$HOME_DIR/.hevenos-x11" ]]; then
-        echo ":: Done — type 'startx' to start the desktop."
-    else
-        echo ":: Done — type 'niri' to start the desktop."
-    fi
+    echo ":: Done — type 'niri' to start the desktop."
     # Revoke the temporary passwordless sudo stage 1 granted for this
     # unattended build window (see install.sh's handoff()) as the very
     # last action, using the access it's about to remove.
