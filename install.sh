@@ -14,6 +14,8 @@ detect_all() {
     UCODE="$(ucode_for_vendor "$(cpu_vendor)")"
     GPU="$(detect_gpu_vendor "$(lspci 2>/dev/null || true)")"
     GPU_PKGS="$(gpu_packages "$GPU")"
+    if gpu_below_gl_floor "$(lspci -nn 2>/dev/null || true)"; then
+        GL_FLOOR=below; else GL_FLOOR=ok; fi
     RAM_KB="$(awk '/MemTotal/{print $2; exit}' /proc/meminfo)"
     if has_broadcom_wifi "$(lspci 2>/dev/null; lsusb 2>/dev/null)"; then
         BROADCOM=yes; else BROADCOM=no; fi
@@ -27,6 +29,7 @@ print_detection() {
   firmware : $FIRMWARE
   ucode    : ${UCODE:-<none>}
   gpu      : $GPU  ->  $GPU_PKGS
+  gl floor : $GL_FLOOR
   ram (kB) : $RAM_KB  (swap: $(needs_swap "$RAM_KB" && echo yes || echo no))
   broadcom : $BROADCOM
   asus     : $ASUS
@@ -41,6 +44,12 @@ preflight() {
         mountpoint -q "$MNT/boot" || die "UEFI: mount the ESP at $MNT/boot before running (avoids kernel shadowing)."
     fi
     ping -c1 -W3 archlinux.org >/dev/null 2>&1 || warn "Network check failed; continuing but pacstrap may fail."
+    if [[ "$GL_FLOOR" == below ]]; then
+        warn "This GPU is below the desktop's hardware floor: it tops out at OpenGL 2.1 (or has no 3D driver at all)."
+        warn "kitty requires OpenGL 3.3 and niri's theme shaders exceed this chip's limits — the hevenos desktop cannot work as designed here."
+        ask_yes_no "Install anyway, knowing the desktop is unsupported on this GPU?" n \
+            || die "Aborted: GPU below the supported floor (OpenGL 3.3-class needed — roughly Intel HD 3000 / 2011 or newer; see README)."
+    fi
     if [[ "$FIRMWARE" == bios ]]; then
         [[ -b "$DISK" ]] || die "Could not determine a valid disk for GRUB (got '$DISK'). Check that $MNT is mounted on a real partition, then rerun."
     fi

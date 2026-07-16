@@ -37,6 +37,22 @@ test_gpu_packages() {
     assert_eq "$(gpu_packages other)"  "mesa" "fallback => mesa"
 }
 
+test_gpu_below_gl_floor() {
+    # The 2010 HP netbook (Pineview / GMA 3150) — the machine that taught us
+    assert_true gpu_below_gl_floor '00:02.0 VGA compatible controller [0300]: Intel Corporation Atom Processor D4xx/D5xx/N4xx/N5xx Integrated Graphics Controller [8086:a011]'
+    assert_true gpu_below_gl_floor '00:02.0 VGA compatible controller [0300]: Intel Corporation Mobile 945GM/GMS, 943/940GML Express Integrated Graphics Controller [8086:27a2] (rev 03)'
+    assert_true gpu_below_gl_floor '00:02.0 VGA compatible controller [0300]: Intel Corporation System Controller Hub (SCH Poulsbo) Graphics Controller [8086:8108] (rev 07)'
+    assert_true gpu_below_gl_floor '00:02.0 VGA compatible controller [0300]: Intel Corporation Atom Processor D2xxx/N2xxx Integrated Graphics Controller [8086:0be1] (rev 09)'
+    # At or above the floor — must NOT trip
+    assert_false gpu_below_gl_floor '00:02.0 VGA compatible controller [0300]: Intel Corporation 2nd Generation Core Processor Family Integrated Graphics Controller [8086:0116] (rev 09)'
+    assert_false gpu_below_gl_floor '00:02.0 VGA compatible controller [0300]: Intel Corporation Iris Xe Graphics [8086:9a49] (rev 01)'
+    assert_false gpu_below_gl_floor '01:00.0 VGA compatible controller [0300]: NVIDIA Corporation GP108M [GeForce MX150] [10de:1d10] (rev a1)'
+    assert_false gpu_below_gl_floor '00:01.0 VGA compatible controller [0300]: Advanced Micro Devices, Inc. [AMD/ATI] Picasso/Raven 2 [1002:15d8]'
+    # Pineview HOST BRIDGE (a010) alongside nothing else must not match
+    assert_false gpu_below_gl_floor '00:00.0 Host bridge [0600]: Intel Corporation Atom Processor D4xx/D5xx/N4xx/N5xx DMI Bridge [8086:a010]'
+    assert_false gpu_below_gl_floor ''
+}
+
 test_has_broadcom_wifi() {
     assert_true  has_broadcom_wifi 'Network controller: Broadcom Inc. BCM4312 802.11b/g LP-PHY'
     assert_false has_broadcom_wifi 'Network controller: Intel Corporation Wireless 7260'

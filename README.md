@@ -15,6 +15,25 @@ The deployer consists of two stages:
 - **UEFI systems**: Mount the EFI System Partition (ESP) at `/mnt/boot` **before** running `install.sh`. This prevents the kernel from being shadowed by an empty ESP mounted later during system initialization.
 - **BIOS systems**: No ESP required; `/boot` will be a regular directory on the root filesystem.
 
+## Hardware Floor
+
+The desktop has one hard requirement the installer enforces: an **OpenGL
+3.3-class GPU** — roughly Intel HD Graphics 3000 (2011) or newer, and any
+AMD/NVIDIA silicon from 2007 onward. Two package choices drive this floor:
+
+- **kitty** refuses to start without OpenGL 3.3.
+- **niri**'s theme effects are GLES fragment shaders that exceed pre-GL3
+  hardware limits (Intel gen3 caps near 64 ALU instructions; the border
+  shader alone needs ~253).
+
+Preflight detects the known below-floor GPUs — Intel gen2/gen3 integrated
+graphics (through Pineview / GMA 3150, the 2008–2010 Atom netbook line) and
+the PowerVR-based GMA 500/600/3600 line, which has no usable 3D driver at
+all — and refuses to continue unless you explicitly confirm an unsupported
+install. Both PCI-ID sets are closed (taken verbatim from the kernel's own
+tables), so the check never needs maintenance. Everything x86_64 above that
+floor is fair game.
+
 ## Stage 1: Live ISO Installation
 
 Boot the Arch Linux live ISO and run the following commands:
@@ -30,7 +49,7 @@ Replace `<repo>` with the URL of this repository.
 
 The installer will:
 
-1. **Detect hardware**: Firmware type (UEFI/BIOS), CPU vendor and microcode, GPU vendor, available RAM, network adapters.
+1. **Detect hardware**: Firmware type (UEFI/BIOS), CPU vendor and microcode, GPU vendor and OpenGL-floor class (see Hardware Floor above), available RAM, network adapters.
 2. **Ask everything up front**: disk-target confirmation, hostname, timezone, username, root/user passwords, and (if an NVIDIA GPU was detected) proprietary-vs-nouveau — all asked back to back before anything long-running starts, so the rest of the install runs unattended.
 3. **Install base system**: Base packages, Linux kernel, firmware, microcode, git, NetworkManager, sudo, and editor.
 4. **Install packages**: Core desktop packages (niri, waybar, kitty, fish, swaybg, mako, swayidle, keyd) and optional lists:

@@ -38,6 +38,20 @@ gpu_packages() {
     esac
 }
 
+gpu_below_gl_floor() { # lspci -nn output
+    # GPUs that cannot run this desktop: kitty refuses to start below
+    # OpenGL 3.3, and niri's theme shaders exceed pre-GL3 fragment-shader
+    # instruction limits. Intel gen2/gen3 (through Pineview/GMA 3150 — the
+    # 2008-2010 Atom netbook line) top out at GL 2.1; the PowerVR-based
+    # GMA 500/600/3600 line has no usable 3D driver at all. Both ID sets
+    # are closed (copied verbatim from the kernel's include/drm/intel/
+    # pciids.h and gma500/psb_drv.c) — no new hardware can ever join them.
+    local gen2='3577|2562|3582|358e|2572'
+    local gen3='2582|258a|2592|2772|27a2|27ae|29b2|29c2|29d2|a001|a011'
+    local powervr='8108|8109|410[0-8]|0be[0-9a-f]'
+    grep -qiE "\[8086:($gen2|$gen3|$powervr)\]" <<<"$1"
+}
+
 has_broadcom_wifi() {
     grep -qiE 'broadcom.*(bcm43|802\.11|wireless)|BCM43[0-9]' <<<"$1"
 }

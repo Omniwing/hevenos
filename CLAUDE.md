@@ -95,9 +95,15 @@ laptop); a second is in progress (2010-era HP netbook).
   `grub-install --target=i386-pc /dev/sda` (whole disk, not partition),
   `grub-mkconfig -o /boot/grub/grub.cfg`. No ESP exists; /boot is a plain dir
   on root, so the ESP-shadowing trap can't occur.
-- **GPU check before investing time:** `lspci | grep -i vga`. Intel GMA 3150 =
-  OK for Wayland. GMA 500 "Poulsbo" = no KMS driver, niri/Wayland unworkable.
-  (Result not yet confirmed — CHECK THIS.)
+- **GPU result (confirmed 2026-07-16): GMA 3150 is BELOW the hevenos floor.**
+  i915/KMS binds and niri *starts*, but the chip is OpenGL 2.1-max — kitty
+  hard-requires GL 3.3, and niri's theme shaders exceed gen3's ~64-ALU
+  fragment-shader limit (border shader alone needs ~253). The kernel also
+  strips atomic KMS from gen3 userspace (`intel_display_device.c`, pre-g4x
+  loses DRIVER_ATOMIC), so niri runs smithay's little-tested legacy path,
+  where this machine hits a deterministic page-flip EACCES display freeze.
+  `install.sh` now detects below-floor GPUs (Intel gen2/gen3 + PowerVR
+  GMA 500/600/3600) at preflight and refuses unless explicitly overridden.
 - 1–2 GB RAM: add 2 GB swapfile (`fallocate -l 2G /swapfile; chmod 600
   /swapfile; mkswap /swapfile; swapon /swapfile` + fstab entry).
 - Prefer `-bin` AUR variants throughout; Atom-era CPU makes source builds
