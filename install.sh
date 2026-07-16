@@ -142,6 +142,9 @@ EOF
             echo "options root=UUID=$root_uuid rw$extra_opts"
         } > "$MNT/boot/loader/entries/arch.conf"
     else
+        if [[ "${NVIDIA_PROPRIETARY:-}" == yes ]]; then
+            arch-chroot "$MNT" sed -i 's/^GRUB_CMDLINE_LINUX_DEFAULT="\(.*\)"/GRUB_CMDLINE_LINUX_DEFAULT="\1 nvidia-drm.modeset=1"/' /etc/default/grub
+        fi
         arch-chroot "$MNT" grub-install --target=i386-pc "$DISK"
         arch-chroot "$MNT" grub-mkconfig -o /boot/grub/grub.cfg
     fi
@@ -249,14 +252,17 @@ install_packages() {
     install_list "$HERE/packages/core.txt" "core desktop"
 
     say "Graphics: $GPU"
+    [[ "${NVIDIA_PROPRIETARY:-}" == yes ]] && GPU_PKGS="nvidia nvidia-utils"
+    # shellcheck disable=SC2086
+    arch-chroot "$MNT" pacman -S --needed --noconfirm $GPU_PKGS
+
     if [[ "${NVIDIA_PROPRIETARY:-}" == yes ]]; then
-        GPU_PKGS="nvidia nvidia-utils"
-        # kms modules for early modeset
+        # kms modules for early modeset — must run after the nvidia package
+        # above actually provides the .ko files, or mkinitcpio silently
+        # builds an initramfs without them.
         arch-chroot "$MNT" sed -i 's/^MODULES=(\(.*\))/MODULES=(\1 nvidia nvidia_modeset nvidia_uvm nvidia_drm)/' /etc/mkinitcpio.conf
         arch-chroot "$MNT" mkinitcpio -P
     fi
-    # shellcheck disable=SC2086
-    arch-chroot "$MNT" pacman -S --needed --noconfirm $GPU_PKGS
 
     if [[ "$ASUS" == yes ]]; then
         say "ASUS hardware detected — installing asus packages"
