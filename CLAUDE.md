@@ -104,6 +104,11 @@ laptop); a second is in progress (2010-era HP netbook).
   where this machine hits a deterministic page-flip EACCES display freeze.
   `install.sh` now detects below-floor GPUs (Intel gen2/gen3 + PowerVR
   GMA 500/600/3600) at preflight and refuses unless explicitly overridden.
+- **Netbook stays in service** (owner's decision, 2026-07-16): not retired —
+  repurposed as a light X11 box. Plan: `xorg-server xorg-xinit
+  xf86-video-intel` + Xfce (or Openbox + tint2 + lxterminal for minimal);
+  X11 is gen3's battle-tested path, VTE terminals need no GL, and the
+  existing fish theme + JetBrainsMono Nerd Font carry over.
 - 1–2 GB RAM: add 2 GB swapfile (`fallocate -l 2G /swapfile; chmod 600
   /swapfile; mkswap /swapfile; swapon /swapfile` + fstab entry).
 - Prefer `-bin` AUR variants throughout; Atom-era CPU makes source builds
