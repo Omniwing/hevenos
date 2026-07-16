@@ -274,6 +274,8 @@ install_packages() {
     install_list "$HERE/packages/core.txt" "core desktop"
     if [[ "$X11_FALLBACK" == yes ]]; then
         install_list "$HERE/packages/fallback-x11.txt" "x11 fallback desktop"
+    else
+        install_list "$HERE/packages/niri-wayland.txt" "niri/wayland desktop"
     fi
 
     say "Graphics: $GPU"
