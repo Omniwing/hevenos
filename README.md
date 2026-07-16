@@ -31,15 +31,16 @@ Replace `<repo>` with the URL of this repository.
 The installer will:
 
 1. **Detect hardware**: Firmware type (UEFI/BIOS), CPU vendor and microcode, GPU vendor, available RAM, network adapters.
-2. **Prompt for confirmation**: Disk target, hostname, timezone, username, and root/user passwords.
+2. **Ask everything up front**: disk-target confirmation, hostname, timezone, username, root/user passwords, and (if an NVIDIA GPU was detected) proprietary-vs-nouveau — all asked back to back before anything long-running starts, so the rest of the install runs unattended.
 3. **Install base system**: Base packages, Linux kernel, firmware, microcode, git, NetworkManager, sudo, and editor.
-4. **Install packages**: Core desktop packages (niri, waybar, kitty, fish, swaybg, mako, swayidle) and optional lists:
+4. **Install packages**: Core desktop packages (niri, waybar, kitty, fish, swaybg, mako, swayidle, keyd) and optional lists:
    - `fonts-extra`: Additional font packages for extended Unicode/glyph coverage.
    - `security-tools`: General security utilities (e.g., cryptographic tools, network analysis).
    - `asus`: ASUS-specific drivers and utilities (AUR packages; installed in Stage 2 if selected).
 5. **Configure bootloader**: systemd-boot on UEFI systems, GRUB (i386-pc) on BIOS systems.
-6. **Enable services**: NetworkManager, wpa_supplicant, chrony, Bluetooth, acpid; disable iwd to avoid conflicts.
-7. **Deploy config**: Extract the desktop environment tarball, adjust hardcoded paths if the username differs from `omniwing`, and set fish as the login shell.
+6. **Enable services**: NetworkManager, wpa_supplicant, chrony, Bluetooth, acpid, keyd; disable iwd to avoid conflicts.
+7. **Configure keyd**: Deploy `/etc/keyd/default.conf` (capslock remapped to an extra Super/Mod key) — a system-level file outside the home-relative tarball, recreated on every target.
+8. **Deploy config**: Extract the desktop environment tarball, adjust hardcoded paths if the username differs from `omniwing`, and set fish as the login shell.
 
 At the end of Stage 1, reboot and remove the installation media.
 

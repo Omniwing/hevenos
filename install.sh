@@ -6,7 +6,7 @@ source "$HERE/lib/detect.sh"
 source "$HERE/lib/packages.sh"
 
 MNT="${HEVENOS_MNT:-/mnt}"
-NVIDIA_PROPRIETARY=""   # set to "yes" in install_packages if chosen; read by install_bootloader
+NVIDIA_PROPRIETARY=""   # set to "yes" in collect_config if chosen; read by install_packages/install_bootloader
 
 detect_all() {
     is_x86_64 || die "This machine is not x86_64; mainline Arch is x86_64-only."
@@ -60,7 +60,12 @@ base_install() {
     genfstab -U "$MNT" >> "$MNT/etc/fstab"
 }
 
-configure_system() {
+collect_config() {
+    # Prompts only — no arch-chroot here, so this can run before base_install
+    # has even pacstrapped a filesystem to chroot into. Keeping every
+    # question (this function + the NVIDIA choice below) front-loaded means
+    # the operator answers everything once, up front, then the rest of the
+    # install runs unattended instead of stalling mid-run for input.
     say "A few questions coming up. Answer each one, or just hit Enter to accept the default shown in [brackets]."
 
     local hostnames=(meadow pebble willow comet hazel cricket breeze acorn lumen thistle sprout marigold)
@@ -68,15 +73,21 @@ configure_system() {
     local default_host="${hostnames[RANDOM % ${#hostnames[@]}]}"
     local default_user="${usernames[RANDOM % ${#usernames[@]}]}"
 
-    local host tz user
-    host="$(ask_default 'Hostname' "$default_host")"
-    tz="$(ask_default 'Timezone (Region/City)' 'America/New_York')"
-    user="$(ask_default 'Username' "$default_user")"
-    local rootpw; rootpw="$(_read_secret 'root password')"
-    local userpw; userpw="$(_read_secret "password for $user")"
+    CFG_HOST="$(ask_default 'Hostname' "$default_host")"
+    CFG_TZ="$(ask_default 'Timezone (Region/City)' 'America/New_York')"
+    CFG_USER="$(ask_default 'Username' "$default_user")"
+    CFG_ROOTPW="$(_read_secret 'root password')"
+    CFG_USERPW="$(_read_secret "password for $CFG_USER")"
 
-    HEVENOS_USER="$user"   # exported for later steps
+    HEVENOS_USER="$CFG_USER"   # exported for later steps
 
+    if [[ "$GPU" == nvidia ]] && ask_yes_no "NVIDIA: install proprietary driver instead of nouveau?" n; then
+        NVIDIA_PROPRIETARY=yes
+    fi
+}
+
+apply_config() {
+    local host="$CFG_HOST" tz="$CFG_TZ" user="$CFG_USER" rootpw="$CFG_ROOTPW" userpw="$CFG_USERPW"
     arch-chroot "$MNT" /bin/bash -euo pipefail <<CHROOT
 ln -sf "/usr/share/zoneinfo/$tz" /etc/localtime
 hwclock --systohc || true
@@ -133,11 +144,21 @@ EOF
 enable_services() {
     say "Enabling system services"
     local svc
-    for svc in NetworkManager wpa_supplicant chronyd bluetooth acpid; do
+    for svc in NetworkManager wpa_supplicant chronyd bluetooth acpid keyd; do
         arch-chroot "$MNT" systemctl enable "$svc" 2>/dev/null \
             || warn "Could not enable $svc.service — its package may not have installed (check missing.txt on the target)."
     done
     arch-chroot "$MNT" systemctl disable iwd 2>/dev/null || true
+}
+
+configure_keyd() {
+    # capslock -> leftmeta: capslock doubles as an extra Super/Mod key for
+    # niri's keybinds. This is a systemd-managed /etc file, not part of the
+    # home-relative desktop-env tarball, so it has to be recreated here
+    # explicitly on every target — same category of gap as the getty
+    # autologin drop-in.
+    say "Configuring keyd (capslock as an extra Super key)"
+    install -Dm644 "$HERE/overlay/keyd-default.conf" "$MNT/etc/keyd/default.conf"
 }
 
 migrate_wifi_credentials() {
@@ -222,14 +243,11 @@ install_packages() {
     install_list "$HERE/packages/core.txt" "core desktop"
 
     say "Graphics: $GPU"
-    if [[ "$GPU" == nvidia ]]; then
-        if ask_yes_no "NVIDIA: install proprietary driver instead of nouveau?" n; then
-            GPU_PKGS="nvidia nvidia-utils"
-            NVIDIA_PROPRIETARY=yes
-            # kms modules for early modeset
-            arch-chroot "$MNT" sed -i 's/^MODULES=(\(.*\))/MODULES=(\1 nvidia nvidia_modeset nvidia_uvm nvidia_drm)/' /etc/mkinitcpio.conf
-            arch-chroot "$MNT" mkinitcpio -P
-        fi
+    if [[ "${NVIDIA_PROPRIETARY:-}" == yes ]]; then
+        GPU_PKGS="nvidia nvidia-utils"
+        # kms modules for early modeset
+        arch-chroot "$MNT" sed -i 's/^MODULES=(\(.*\))/MODULES=(\1 nvidia nvidia_modeset nvidia_uvm nvidia_drm)/' /etc/mkinitcpio.conf
+        arch-chroot "$MNT" mkinitcpio -P
     fi
     # shellcheck disable=SC2086
     arch-chroot "$MNT" pacman -S --needed --noconfirm $GPU_PKGS
@@ -340,10 +358,12 @@ main() {
     detect_all
     print_detection
     preflight
+    collect_config
     base_install
-    configure_system
+    apply_config
     install_packages
     enable_services
+    configure_keyd
     migrate_wifi_credentials
     setup_swap
     install_bootloader
