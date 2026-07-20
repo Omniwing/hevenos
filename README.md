@@ -7,7 +7,7 @@ A two-stage Arch Linux installer for replicating a Wayland-based desktop environ
 The deployer consists of two stages:
 
 - **Stage 1** runs in the live ISO as root: base system installation, package lists, bootloader setup, and config deployment.
-- **Stage 2** runs after first boot as the regular user: AUR package installation and font cache refresh.
+- **Stage 2** runs automatically the first time you log in after reboot (as the regular user): AUR package installation and font cache refresh. No manual step needed — see [Stage 2](#stage-2-post-boot-user-setup) below.
 
 ## Prerequisites
 
@@ -54,32 +54,40 @@ The installer will:
 1. **Detect hardware**: Firmware type (UEFI/BIOS), CPU vendor and microcode, GPU vendor and OpenGL-floor class (see Hardware Floor above), available RAM, network adapters.
 2. **Ask everything up front**: disk-target confirmation, hostname, timezone, username, root/user passwords, and (if an NVIDIA GPU was detected) proprietary-vs-nouveau — all asked back to back before anything long-running starts, so the rest of the install runs unattended.
 3. **Install base system**: Base packages, Linux kernel, firmware, microcode, git, NetworkManager, sudo, and editor.
-4. **Install packages**: Core desktop packages (niri, waybar, kitty, fish, swaybg, mako, swayidle, keyd) and optional lists:
-   - `fonts-extra`: Additional font packages for extended Unicode/glyph coverage.
-   - `security-tools`: General security utilities (e.g., cryptographic tools, network analysis).
-   - `asus`: ASUS-specific drivers and utilities (AUR packages; installed in Stage 2 if selected).
+4. **Install packages**: Core desktop packages (niri, waybar, kitty, fish, swaybg, mako, keyd, and other GUI/OS essentials — see `packages/core.txt`) plus driver packages for the detected GPU vendor. If ASUS hardware is detected (see Optional Package Lists below), its AUR packages are queued for automatic installation in Stage 2 — no prompt.
 5. **Configure bootloader**: systemd-boot on UEFI systems, GRUB (i386-pc) on BIOS systems.
 6. **Enable services**: NetworkManager, wpa_supplicant, chrony, Bluetooth, acpid, keyd; disable iwd to avoid conflicts.
 7. **Configure keyd**: Deploy `/etc/keyd/default.conf` (capslock remapped to an extra Super/Mod key) — a system-level file outside the home-relative tarball, recreated on every target.
-8. **Deploy config**: Extract the desktop environment tarball, adjust hardcoded paths if the username differs from `omniwing`, and set fish as the login shell.
+8. **Migrate WiFi credentials**: The live ISO connects to wifi via `iwd`, not NetworkManager, so those saved credentials don't carry over on their own. Any saved WPA/WPA2-personal network is converted to a NetworkManager connection profile on the target, so it auto-connects on first real boot with no re-entry of the password. (Enterprise wifi or open networks aren't covered by this and fall back to Stage 2's `nmtui` prompt.)
+9. **Deploy config**: Extract the desktop environment tarball, adjust hardcoded paths if the username differs from `omniwing`, and set fish as the login shell.
 
 At the end of Stage 1, reboot and remove the installation media.
 
 ## Stage 2: Post-Boot User Setup
 
-After first boot, log in as the regular user (created during Stage 1) and run:
+Stage 2 runs **automatically** — there's nothing to type. The first time you log in at the console (as the regular user created in Stage 1), the login banner detects that setup isn't finished yet and runs `stage2.sh` for you before handing control back:
 
-```bash
-./stage2.sh
+```
+  >> Setup isn't finished — finishing it automatically now.
+  >> This installs AUR packages and can take a while on slow hardware.
 ```
 
-This will:
+This fires from a `fish_greeting` function (fish is the login shell), with a `.bash_profile` fallback in case fish never became the login shell on a given machine. It only triggers on a plain console/TTY login, not inside an already-running desktop session. If it's interrupted (network hiccup, reboot, walking away) it simply retries on your next login — safe to log out/in or reboot again. Once it succeeds, `stage2.sh` deletes itself and revokes the temporary passwordless-sudo grant Stage 1 set up for the unattended build (everyday `sudo` stays password-protected from then on), so the banner instead greets you with:
 
-1. **Wait for network**: poll for real DNS resolution rather than assuming it's ready immediately at login.
-2. **Install AUR packages**: build and install each package in `packages/aur.txt` directly with `makepkg` — no AUR helper. We only ever install a small, fixed, hand-picked list, so paru/yay's extra convenience isn't needed, and it avoids the class of bug where a prebuilt AUR-helper binary is linked against a `libalpm` version that's since moved on.
-3. **Install optional AUR packages**: If `asus` was selected during Stage 1, build and install packages from `packages/optional/asus.txt` the same way.
-4. **Install Broadcom WiFi drivers**: If Broadcom wireless was detected, build and install `broadcom-wl-dkms`.
+```
+  >> type 'niri' to start the desktop
+```
+
+You can still run `./stage2.sh` manually if you want to watch it run or kick it off before logging out/in.
+
+Stage 2 does the following:
+
+1. **Wait for network**: poll for real DNS resolution rather than assuming it's ready immediately at login; if it's still not up after ~15s, open `nmtui` so you can pick a network, then keep polling.
+2. **Full system upgrade, then install AUR packages**: `pacman -Syu` first (time may have passed since Stage 1), then build and install each package in `packages/aur.txt` directly with `makepkg` — no AUR helper. We only ever install a small, fixed, hand-picked list, so paru/yay's extra convenience isn't needed, and it avoids the class of bug where a prebuilt AUR-helper binary is linked against a `libalpm` version that's since moved on.
+3. **Install optional AUR packages**: If ASUS hardware was auto-detected during Stage 1 (marker file `.hevenos-asus`), build and install packages from `packages/optional/asus.txt` the same way.
+4. **Install Broadcom WiFi drivers**: If Broadcom wireless was detected during Stage 1 (marker file `.hevenos-broadcom`), build and install `broadcom-wl-dkms`.
 5. **Refresh font cache**: Rebuild the font cache for newly installed fonts.
+6. **Revoke temporary sudo and self-delete**: remove the passwordless-sudo grant and `stage2.sh` itself, marking setup complete.
 
 After Stage 2 completes, start the desktop:
 
@@ -89,13 +97,12 @@ niri
 
 ## Optional Package Lists
 
-During installation, you will be prompted to optionally install:
+Nothing here is prompted for — the installer auto-detects what applies and asks nothing:
 
-- **`fonts-extra`**: Extended font coverage (native-repo packages, installed fully in Stage 1; no Stage 2 involvement).
-- **`security-tools`**: Security and cryptography utilities (native-repo packages, installed fully in Stage 1; no Stage 2 involvement).
-- **`asus`**: ASUS laptop-specific tools and drivers (AUR packages). Marker file: `.hevenos-asus` (Stage 2 uses this to install optional ASUS AUR packages).
+- **`asus`**: ASUS laptop-specific tools and drivers (AUR packages). Auto-detected from the DMI vendor string (`/sys/class/dmi/id/sys_vendor`) at preflight; a match writes marker file `.hevenos-asus` in Stage 1, which Stage 2 uses to install `packages/optional/asus.txt`.
+- **`fonts-extra`** and **`security-tools`**: Native-repo package lists (extended font/Unicode coverage; security and cryptography utilities) kept in the repo for reference, but no longer installed or offered by the installer. Install by hand if wanted: `pacman -S --needed - < packages/optional/<list>.txt`.
 
-Broadcom WiFi detection is automatic; if present, Stage 2 will offer to install `broadcom-wl-dkms`.
+Broadcom WiFi detection is likewise automatic; if present, Stage 1 writes marker file `.hevenos-broadcom`, and Stage 2 installs `broadcom-wl-dkms`.
 
 ## Configuration
 
