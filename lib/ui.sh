@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # Minimal logging + prompt helpers. Prompts read stdin so they are testable
 # and degrade to the default on EOF / non-interactive input.
 

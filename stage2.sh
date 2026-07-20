@@ -63,6 +63,14 @@ install_aur_list() { # path-to-list
     done < "$1"
 }
 
+# Revoke the temporary passwordless-sudo grant (see install.sh's handoff())
+# on ANY exit — success or failure — so it can never outlive a single run.
+# A failed build previously left NOPASSWD sudo in place until some later run
+# happened to succeed, i.e. potentially forever if a package stayed broken.
+# `sudo -n` means the trap never prompts: on the granted run it removes the
+# file silently; on a later retry (grant already gone) it's a silent no-op.
+trap 'sudo -n rm -f /etc/sudoers.d/99-hevenos-stage2 2>/dev/null || true' EXIT
+
 main() {
     wait_for_network
     # Full upgrade before building anything: real time may have passed
@@ -76,10 +84,10 @@ main() {
     fi
     fc-cache -f || true
     echo ":: Done — type 'niri' to start the desktop."
-    # Revoke the temporary passwordless sudo stage 1 granted for this
-    # unattended build window (see install.sh's handoff()) as the very
-    # last action, using the access it's about to remove.
-    sudo rm -f /etc/sudoers.d/99-hevenos-stage2
+    # Success only: remove the installer so the login hook stops re-running
+    # it. On failure the script has already exited (set -e) with stage2.sh
+    # left in place, so setup retries at the next login; the sudo grant is
+    # revoked either way by the EXIT trap above.
     rm -f "$HOME_DIR/stage2.sh"
 }
 main

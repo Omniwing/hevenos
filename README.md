@@ -59,7 +59,7 @@ The installer will:
 6. **Enable services**: NetworkManager, wpa_supplicant, chrony, Bluetooth, acpid, keyd; disable iwd to avoid conflicts.
 7. **Configure keyd**: Deploy `/etc/keyd/default.conf` (capslock remapped to an extra Super/Mod key) — a system-level file outside the home-relative tarball, recreated on every target.
 8. **Migrate WiFi credentials**: The live ISO connects to wifi via `iwd`, not NetworkManager, so those saved credentials don't carry over on their own. Any saved WPA/WPA2-personal network is converted to a NetworkManager connection profile on the target, so it auto-connects on first real boot with no re-entry of the password. (Enterprise wifi or open networks aren't covered by this and fall back to Stage 2's `nmtui` prompt.)
-9. **Deploy config**: Extract the desktop environment tarball, adjust hardcoded paths if the username differs from `omniwing`, and set fish as the login shell.
+9. **Deploy config**: Extract the desktop environment tarball and set fish as the login shell. The config is username-agnostic (all paths are `$HOME`-relative), so nothing needs rewriting for the chosen user.
 
 At the end of Stage 1, reboot and remove the installation media.
 
@@ -115,7 +115,7 @@ The desktop environment is deployed from `payload/desktop-env.tar.gz`, which con
 - `.local/share/icons/`: Custom icon sets.
 - `Pictures/Wallpapers/`: Wallpaper images (including `cyberpunk-80s-neon.jpg`).
 
-**Hardcoded paths**: The tarball contains three hardcoded `/home/omniwing` paths in `.config/niri/config.kdl` and `.config/fish/config.fish`. If the target username differs, `install.sh` automatically adjusts these paths using `sed`.
+**Username-agnostic paths**: The config references `$HOME` rather than any absolute `/home/<user>` path. In `.config/fish/config.fish` fish expands `$HOME` directly; in `.config/niri/config.kdl` the `swaybg` and `lid-handler` startup entries are launched through `bash -c` so `$HOME` expands at runtime. Nothing is rewritten at install time, and the config works unchanged for whatever username is chosen.
 
 ## Maintainer Notes
 
@@ -123,14 +123,16 @@ The desktop environment is deployed from `payload/desktop-env.tar.gz`, which con
 
 The `tools/build-payload.sh` script regenerates the deployment tarball from a source tarball. It:
 
-1. Strips the live OpenAI API key from fish variables (always present in omniwing's config).
+1. Strips the live OpenAI API key from fish variables (present in the source config).
 2. Removes temporary files, symlinks to AI tools, and vendored utilities.
-3. Validates that the key was successfully scrubbed before writing the final archive.
+3. Removes personal Slack alerting scripts and the cached tide prompt variables (which bake in the source `user@host`), keeping the payload username-agnostic.
+4. Validates before writing the final archive that the key, the Slack scripts, and any leftover source-username identifier are all gone — the build fails loudly otherwise.
 
 **Important**: Whenever the source config tarball changes:
 - Rebuild the payload by running `tools/build-payload.sh <source.tar.gz> payload/desktop-env.tar.gz`.
 - **Rotate the OpenAI API key** (fetch a new one from the OpenAI dashboard and update the source before rebuilding).
 - The repository **must never contain the live API key**.
+- Keep the source config `$HOME`-relative (no absolute `/home/<user>` paths); the build's identity guard will reject a payload that still carries the source username.
 
 ### Testing
 
@@ -142,7 +144,7 @@ shellcheck ./*.sh lib/*.sh tools/*.sh && bash tests/run.sh   # Static checks (sh
 
 Note: `shellcheck` should be installed (e.g. via `pacman -S shellcheck` on Arch, or your distro's package manager elsewhere). For a syntax-only check without shellcheck, use `bash -n ./*.sh lib/*.sh tools/*.sh` as a fallback.
 
-Expected: All static checks pass, 120 tests passed, 0 failed.
+Expected: All static checks pass, 124 tests passed, 0 failed.
 
 ## VM Validation Ladder
 
@@ -154,7 +156,7 @@ Before deploying to real hardware, validate the installer across the following e
    ```
    Note: Install `shellcheck` if not available (e.g. `pacman -S shellcheck` on Arch). For syntax-only checks without it, use `bash -n ./*.sh lib/*.sh tools/*.sh` as a fallback.
    
-   Expected: All checks pass; all 120 tests pass.
+   Expected: All checks pass; all 124 tests pass.
 
 2. **Detect smoke test**: Verify hardware detection on each target VM or host.
    ```bash

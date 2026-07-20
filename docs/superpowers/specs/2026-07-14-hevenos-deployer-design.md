@@ -5,7 +5,7 @@
 
 ## Purpose
 
-A git-hosted, two-stage installer that replicates omniwing's Arch Linux + niri
+A git-hosted, two-stage installer that replicates <user>'s Arch Linux + niri
 Wayland desktop onto a fresh machine with minimal typing. The operator
 partitions/formats/mounts the disks by hand; from there the scripts take the
 machine from an empty `/mnt` to a booting niri desktop.
@@ -68,7 +68,7 @@ Rebuild `desktop-env.tar.gz` from a cleaned extraction, removing:
 1. The **live `OPENAI_API_KEY`** — strip the
    `SETUVAR --export OPENAI_API_KEY:...` line from
    `.config/fish/fish_variables`.
-2. `.local/bin/claude` — dangling symlink to omniwing's Claude Code install.
+2. `.local/bin/claude` — dangling symlink to <user>'s Claude Code install.
 3. `.local/bin/terminalgpt` — dangling symlink to a pipx OpenAI CLI (the
    consumer of the key above).
 4. `.config/fish/fish_variablescV1lM2c1Kr` — leftover atomic-write temp file.
@@ -126,11 +126,11 @@ things that *are* explicit package/config decisions.
 - Prompt + set root password.
 - Prompt username; create user with `-m -G wheel -s /usr/bin/fish`, set its
   password, enable `%wheel` sudo.
-- Path fix: `sed -i "s|/home/omniwing|/home/<user>|g"` across
+- Path fix: `sed -i "s|/home/<user>|/home/<user>|g"` across
   `~/.config/niri/config.kdl` and `~/.config/fish/config.fish` (three hardcoded
   paths total: lid-handler, wallpaper, pipx PATH line). Verify with
-  `grep -rl /home/omniwing ~/.config ~/.local/bin` returning nothing.
-  (Skip the rewrite when username == omniwing.)
+  `grep -rl /home/<user> ~/.config ~/.local/bin` returning nothing.
+  (Skip the rewrite when username == <user>.)
 
 ### 5. Bootloader (firmware-dependent)
 - **UEFI:** `bootctl install`; write a loader entry referencing the ucode and

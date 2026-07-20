@@ -1,0 +1,6 @@
+# install.sh's detect helpers (is_x86_64, detect_firmware, is_asus_hardware,
+# and the other lib/detect.sh probes) take an optional injectable argument so
+# unit tests can drive them, and fall back to a live probe when called with
+# none. Calling them bare is the intended usage, so SC2119 ("use foo \"$@\" if
+# the function's $1 should mean the script's $1") is a false positive here.
+disable=SC2119

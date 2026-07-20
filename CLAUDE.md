@@ -2,7 +2,7 @@
 
 ## What this project is
 
-Replicating omniwing's personal Arch Linux desktop environment (Wayland + niri
+Replicating a personal Arch Linux desktop environment (Wayland + niri
 compositor, fish shell, custom theming) onto other machines from a payload of
 two package lists and one config tarball. One deployment is complete (friend's
 laptop); a second is in progress (2010-era HP netbook).
@@ -19,15 +19,16 @@ laptop); a second is in progress (2010-era HP netbook).
   - Tarball was created with `cd ~` + relative paths (NOT `-C $HOME` — see
     lessons). Extract with `cd ~; tar xzf desktop-env.tar.gz`.
 
-## Source environment facts (omniwing's laptop)
+## Source environment facts (the source laptop)
 
 - niri config: `~/.config/niri/config.kdl` spawns at startup: waybar, mako,
   swayidle (inline args, no separate config file), a `lid-handler` script via
   bash, and swaybg with the wallpaper above.
-- TWO HARDCODED `/home/omniwing` paths in config.kdl (lid-handler path and
-  wallpaper path). On any target where the username differs:
-  `sed -i "s|/home/omniwing|$HOME|g" ~/.config/niri/config.kdl`
-  and check with `grep -rl /home/omniwing ~/.config ~/.local/bin`.
+- The shipped config is username-agnostic: niri and fish reference `$HOME`,
+  with swaybg and lid-handler launched via `bash -c` so `$HOME` expands at
+  runtime. There are no absolute `/home/<user>` paths, so nothing needs a
+  post-extract path rewrite. (`tools/build-payload.sh` has a guard that
+  rejects any payload still carrying the source username.)
 - NO custom GTK theme (stock Adwaita), no cursor theme, no dconf state, no
   user-local fonts. Font used by waybar/kitty: **JetBrainsMono Nerd Font**,
   provided by a package already present in pkglist-native.txt.
@@ -50,7 +51,7 @@ laptop); a second is in progress (2010-era HP netbook).
    Use **paru-bin** not paru on weak hardware (paru compiles Rust for hours).
 5. `paru -S --needed - < pkglist-aur.txt` (prefer `-bin` variants on slow CPUs)
 6. `cd ~; tar xzf desktop-env.tar.gz; fc-cache -f`
-7. Username path fix (sed above) if user != omniwing.
+7. No username path fix needed — the config is `$HOME`-relative.
 8. `chsh -s /usr/bin/fish`
 9. Recreate getty autologin drop-in (root).
 10. Restart niri fully (`niri msg action quit` + relogin) — config changes via
@@ -115,8 +116,8 @@ laptop); a second is in progress (2010-era HP netbook).
   was folded back into `packages/core.txt` since the branch that justified
   it no longer exists.
 - **Netbook stays in service, but not via hevenos.** Forked into a sibling
-  project, **legacyheven** (`~/legacyheven`, github.com/Omniwing/legacyheven
-  — pre-planning stage only, see that repo's own docs), whose goal is a
+  project, **legacyheven** (`~/legacyheven`, a separate repo — pre-planning
+  stage only, see that repo's own docs), whose goal is a
   themeless desktop with the same *behavior* as hevenos (niri-style tiling
   keybinds — window/column focus and move via arrows+hjkl, workspace nav,
   consume/expel, resize, `Mod+Return` terminal launch — see
@@ -139,7 +140,7 @@ laptop); a second is in progress (2010-era HP netbook).
   temporarily via native installer (`~/.local/bin/claude`); remember it
   uninstalls with `rm -f ~/.local/bin/claude; rm -rf ~/.local/share/claude
   ~/.claude; rm ~/.claude.json` and that the auth session in ~/.claude.json
-  belongs to omniwing's account — scrub before handback if not done already.
+  belongs to the maintainer's account — scrub before handback if not done already.
 
 ## Conventions for this project
 

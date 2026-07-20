@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # Pure package-list filtering. Ignores blank lines and '#' comments in the
 # wanted list so the curated files can be annotated.
 

@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** A git-hosted, two-stage installer that turns a freshly partitioned/mounted Arch Linux target (any x86_64 machine, BIOS or UEFI) into omniwing's niri Wayland desktop with minimal prompting.
+**Goal:** A git-hosted, two-stage installer that turns a freshly partitioned/mounted Arch Linux target (any x86_64 machine, BIOS or UEFI) into <user>'s niri Wayland desktop with minimal prompting.
 
 **Architecture:** All guessable logic (firmware/CPU/GPU/RAM detection, package-list filtering) lives in small, dependency-free, unit-tested helper libraries under `lib/`. `install.sh` (stage 1, run from the live ISO) sources those helpers, detects the hardware, does pacstrap + chroot config + bootloader + tolerant package install + graphics driver + config payload, then hands off to `stage2.sh` (run as the user after first boot) for AUR packages. A separate `tools/build-payload.sh` produces the scrubbed config tarball. Tests are plain-bash assertions (no bats dependency) plus `shellcheck`; integration is a documented VM/hardware ladder.
 
@@ -845,7 +845,7 @@ configure_system() {
     local host tz user
     host="$(ask_default 'Hostname' 'archbox')"
     tz="$(ask_default 'Timezone (Region/City)' 'America/New_York')"
-    user="$(ask_default 'Username' 'omniwing')"
+    user="$(ask_default 'Username' '<user>')"
     say "Set the ROOT password:"; local rootpw; rootpw="$(_read_secret)"
     say "Set the password for $user:"; local userpw; userpw="$(_read_secret)"
 
@@ -967,17 +967,17 @@ cd /home/$HEVENOS_USER
 sudo -u $HEVENOS_USER tar xzf desktop-env.tar.gz
 rm -f desktop-env.tar.gz
 CHROOT
-    # Username path fix (three hardcoded /home/omniwing paths).
-    if [[ "$HEVENOS_USER" != omniwing ]]; then
+    # Username path fix (three hardcoded /home/<user> paths).
+    if [[ "$HEVENOS_USER" != <user> ]]; then
         arch-chroot "$MNT" /bin/bash -euo pipefail <<CHROOT
-sed -i "s|/home/omniwing|/home/$HEVENOS_USER|g" \
+sed -i "s|/home/<user>|/home/$HEVENOS_USER|g" \
     /home/$HEVENOS_USER/.config/niri/config.kdl \
     /home/$HEVENOS_USER/.config/fish/config.fish
 CHROOT
     fi
     # Verify no stragglers remain.
-    if arch-chroot "$MNT" grep -rl /home/omniwing "/home/$HEVENOS_USER/.config" 2>/dev/null | grep -q .; then
-        warn "Some /home/omniwing paths remain — check manually."
+    if arch-chroot "$MNT" grep -rl /home/<user> "/home/$HEVENOS_USER/.config" 2>/dev/null | grep -q .; then
+        warn "Some /home/<user> paths remain — check manually."
     fi
 
     # Console login banner.

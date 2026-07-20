@@ -93,8 +93,14 @@ collect_config() {
 }
 
 apply_config() {
-    local host="$CFG_HOST" tz="$CFG_TZ" user="$CFG_USER" rootpw="$CFG_ROOTPW" userpw="$CFG_USERPW"
-    arch-chroot "$MNT" /bin/bash -euo pipefail <<CHROOT
+    local host="$CFG_HOST" tz="$CFG_TZ" user="$CFG_USER"
+    # Config values are passed as positional parameters ($1..$3) to a *quoted*
+    # here-doc (bash -s), never string-interpolated into it. A value with shell
+    # metacharacters — a single quote, $, backtick, space — therefore can't
+    # break the chroot script or be executed inside it. (Passwords are handled
+    # separately below, straight into chpasswd's stdin as data.)
+    arch-chroot "$MNT" /bin/bash -euo pipefail -s "$host" "$tz" "$user" <<'CHROOT'
+host="$1"; tz="$2"; user="$3"
 ln -sf "/usr/share/zoneinfo/$tz" /etc/localtime
 hwclock --systohc || true
 sed -i 's/^#\(en_US.UTF-8 UTF-8\)/\1/' /etc/locale.gen
@@ -102,15 +108,16 @@ locale-gen
 echo 'LANG=en_US.UTF-8' > /etc/locale.conf
 echo 'KEYMAP=us' > /etc/vconsole.conf
 echo "MAKEFLAGS=\"-j$(nproc)\"" >> /etc/makepkg.conf
-echo '$host' > /etc/hostname
+echo "$host" > /etc/hostname
 mkinitcpio -P
-echo 'root:$rootpw' | chpasswd
-id -u '$user' >/dev/null 2>&1 || useradd -m -G wheel '$user'
-echo '$user:$userpw' | chpasswd
+id -u "$user" >/dev/null 2>&1 || useradd -m -G wheel "$user"
 sed -i 's/^# %wheel ALL=(ALL:ALL) ALL/%wheel ALL=(ALL:ALL) ALL/' /etc/sudoers
 CHROOT
 
-    # Username path fix across the (soon-to-be-extracted) config; done post-extract.
+    # Passwords never touch the shell as text: fed to chpasswd on stdin as
+    # data, so any character (including ' $ ` and spaces) is safe.
+    printf 'root:%s\n' "$CFG_ROOTPW"       | arch-chroot "$MNT" chpasswd
+    printf '%s:%s\n'  "$user" "$CFG_USERPW" | arch-chroot "$MNT" chpasswd
 }
 
 _read_secret() { # label
@@ -280,18 +287,9 @@ cd /home/$HEVENOS_USER
 sudo -u $HEVENOS_USER tar xzf desktop-env.tar.gz
 rm -f desktop-env.tar.gz
 CHROOT
-    # Username path fix (three hardcoded /home/omniwing paths).
-    if [[ "$HEVENOS_USER" != omniwing ]]; then
-        arch-chroot "$MNT" /bin/bash -euo pipefail <<CHROOT
-sed -i "s|/home/omniwing|/home/$HEVENOS_USER|g" \
-    /home/$HEVENOS_USER/.config/niri/config.kdl \
-    /home/$HEVENOS_USER/.config/fish/config.fish
-CHROOT
-    fi
-    # Verify no stragglers remain.
-    if arch-chroot "$MNT" grep -rl /home/omniwing "/home/$HEVENOS_USER/.config" 2>/dev/null | grep -q .; then
-        warn "Some /home/omniwing paths remain — check manually."
-    fi
+    # The config ships with no hardcoded home paths: niri/fish reference
+    # $HOME (expanded at runtime via the login shell / spawned bash -c), so
+    # the desktop works for whatever username was chosen with no rewriting.
 
     # Console login banner.
     install -Dm644 "$HERE/overlay/fish_greeting.fish" \
@@ -339,9 +337,9 @@ handoff() {
     # Temporary passwordless sudo for the stage-2 AUR build window only.
     # makepkg -si calls sudo internally; stage2.sh runs unattended right
     # at login, so a password prompt with nobody there to answer it just
-    # times out and kills the whole run. stage2.sh revokes this itself as
-    # its last action on success — everyday sudo stays password-protected
-    # once setup is actually done.
+    # times out and kills the whole run. stage2.sh revokes this on any exit
+    # (an EXIT trap, so a failed build can't leave it behind) — everyday sudo
+    # stays password-protected once setup is actually done.
     cat > "$MNT/etc/sudoers.d/99-hevenos-stage2" <<EOF
 $HEVENOS_USER ALL=(ALL:ALL) NOPASSWD: ALL
 EOF

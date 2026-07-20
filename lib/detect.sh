@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # Pure hardware-detection helpers. Each accepts an injectable argument (for
 # tests) and falls back to a live probe when called with none.
 
