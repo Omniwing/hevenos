@@ -42,12 +42,15 @@ Boot the Arch Linux live ISO and run the following commands:
 
 ```bash
 pacman -Sy git
-git clone <repo> hevenos
+git clone https://github.com/Omniwing/hevenos.git
 cd hevenos
 ./install.sh
 ```
 
-Replace `<repo>` with the URL of this repository.
+The HTTPS URL is deliberate: the live ISO has no SSH key, so the
+`git@github.com:Omniwing/hevenos.git` form will fail there with a
+publickey error. The clone creates the `hevenos` directory itself — no
+second argument needed.
 
 The installer will:
 
