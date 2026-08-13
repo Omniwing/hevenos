@@ -47,11 +47,6 @@ cd hevenos
 ./install.sh
 ```
 
-The HTTPS URL is deliberate: the live ISO has no SSH key, so the
-`git@github.com:Omniwing/hevenos.git` form will fail there with a
-publickey error. The clone creates the `hevenos` directory itself — no
-second argument needed.
-
 The installer will:
 
 1. **Detect hardware**: Firmware type, CPU vendor and microcode, GPU vendor and OpenGL-floor class (see Hardware Floor above), available RAM, network adapters, and the EFI System Partition to install to.
