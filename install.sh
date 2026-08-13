@@ -1,12 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
-HERE="$(cd "$(dirname "$0")" && pwd)"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/lib/ui.sh"
 source "$HERE/lib/detect.sh"
 source "$HERE/lib/packages.sh"
 
 MNT="${HEVENOS_MNT:-/mnt}"
-NVIDIA_PROPRIETARY=""   # set to "yes" in collect_config if chosen; read by install_packages/install_bootloader
+NVIDIA_PROPRIETARY=""   # "yes" if the operator ASKED for the proprietary driver (collect_config)
+NVIDIA_ACTIVE=""        # "yes" only once the driver is CONFIRMED installed (install_packages).
+                        # The kernel command line is built from this one, not from the request:
+                        # nvidia-drm.modeset=1 on a machine running nouveau is a lie in the
+                        # bootloader config that outlives the install.
+INSTALL_WARNINGS=0      # count of degradations (missing packages, failed transactions)
 
 detect_all() {
     is_x86_64 || die "This machine is not x86_64; mainline Arch is x86_64-only."
@@ -87,7 +92,7 @@ collect_config() {
 
     HEVENOS_USER="$CFG_USER"   # exported for later steps
 
-    if [[ "$GPU" == nvidia ]] && ask_yes_no "NVIDIA: install proprietary driver instead of nouveau?" n; then
+    if [[ "$GPU" == nvidia ]] && ask_yes_no "NVIDIA: install the proprietary driver (nvidia-open, needs RTX 20-series or newer) instead of nouveau?" n; then
         NVIDIA_PROPRIETARY=yes
     fi
 }
@@ -152,7 +157,7 @@ timeout 5
 EOF
         mkdir -p "$MNT/boot/loader/entries"
         local extra_opts=""
-        [[ "${NVIDIA_PROPRIETARY:-}" == yes ]] && extra_opts=" nvidia-drm.modeset=1"
+        [[ "${NVIDIA_ACTIVE:-}" == yes ]] && extra_opts=" nvidia-drm.modeset=1"
         {
             echo "title   Arch Linux (hevenos)"
             echo "linux   /vmlinuz-linux"
@@ -161,7 +166,7 @@ EOF
             echo "options root=UUID=$root_uuid rw$extra_opts"
         } > "$MNT/boot/loader/entries/arch.conf"
     else
-        if [[ "${NVIDIA_PROPRIETARY:-}" == yes ]]; then
+        if [[ "${NVIDIA_ACTIVE:-}" == yes ]]; then
             arch-chroot "$MNT" sed -i 's/^GRUB_CMDLINE_LINUX_DEFAULT="\(.*\)"/GRUB_CMDLINE_LINUX_DEFAULT="\1 nvidia-drm.modeset=1"/' /etc/default/grub
         fi
         arch-chroot "$MNT" grub-install --target=i386-pc "$DISK"
@@ -250,15 +255,114 @@ echo '/swapfile none swap defaults 0 0' >> /etc/fstab
 CHROOT
 }
 
-install_list() { # path-to-list  label
-    local list="$1" label="$2" repo avail
-    repo="$(mktemp)"; arch-chroot "$MNT" pacman -Slq | sort -u > "$repo"
-    avail="$(available_pkgs "$repo" "$list" | tr '\n' ' ')"
-    say "Installing $label: $(wc -w <<<"$avail") packages"
-    # shellcheck disable=SC2086
-    [[ -n "${avail// }" ]] && arch-chroot "$MNT" pacman -S --needed --noconfirm $avail
-    missing_pkgs "$repo" "$list" >> "$MNT/root/missing.txt"
+# Install a set of packages without ever aborting the run.
+#
+# Upstream renames and drops packages on its own schedule, and this installer
+# is a static list of names checked into git — so it goes stale by sitting
+# still. Arch retired the 'nvidia' package in favour of 'nvidia-open', which
+# turned a one-word staleness into a dead install: under 'set -e' a single
+# unresolvable name makes 'pacman -S' exit non-zero, and every step after it
+# never runs. The step after it here was install_bootloader, so the machine
+# came up with a fully-populated root filesystem and no way to boot it.
+#
+# Every target therefore gets filtered against the repo index first. Names the
+# repos no longer carry are reported on screen, counted, and appended to
+# /root/missing.txt on the target — never raised as an error. A pacman
+# transaction that fails for some other reason (a download error, a conflict)
+# is likewise downgraded to a warning: a system missing packages can be
+# repaired from itself once it boots, which is only true if the rest of the
+# install is allowed to finish.
+_install_wantfile() { # wantfile  label
+    local want="$1" label="$2" repo
+    local -a avail missing
+    repo="$(mktemp)"
+    if ! arch-chroot "$MNT" pacman -Slq | sort -u > "$repo"; then
+        warn "$label: could not read the package index from any configured repository."
+        warn "    Skipping this set entirely and continuing. Check the network and"
+        warn "    /etc/pacman.d/mirrorlist on the new system."
+        record_missing "$label" "$(_clean_list "$want" | tr '\n' ' ')"
+        rm -f "$repo"; return 0
+    fi
+
+    mapfile -t avail   < <(available_pkgs "$repo" "$want")
+    mapfile -t missing < <(missing_pkgs   "$repo" "$want")
     rm -f "$repo"
+
+    if (( ${#missing[@]} )); then
+        warn "$label: ${#missing[@]} package(s) not found in any configured repository:"
+        warn "      ${missing[*]}"
+        warn "    These names were renamed or dropped upstream, so this installer is"
+        warn "    probably out of date. Continuing without them."
+        record_missing "$label" "${missing[*]}"
+    fi
+
+    if (( ${#avail[@]} )); then
+        say "Installing $label: ${#avail[@]} packages"
+        if ! arch-chroot "$MNT" pacman -S --needed --noconfirm "${avail[@]}"; then
+            warn "$label: pacman could not complete the transaction."
+            warn "    Continuing so the rest of the install (including the bootloader)"
+            warn "    still runs. Re-run 'pacman -S --needed' for this set after first boot."
+            record_missing "$label (pacman transaction failed)" "${avail[*]}"
+        fi
+    else
+        say "Installing $label: nothing available to install"
+    fi
+}
+
+# File-backed package set (the curated lists in packages/).
+install_list() { # path-to-list  label
+    _install_wantfile "$1" "$2"
+}
+
+# Inline package set, for names computed at runtime rather than read from a
+# curated file. Same filtering and same refusal to abort.
+install_pkgs() { # label  pkg...
+    local label="$1"; shift
+    (( $# )) || { say "Installing $label: nothing to do"; return 0; }
+    local want; want="$(mktemp)"
+    printf '%s\n' "$@" > "$want"
+    _install_wantfile "$want" "$label"
+    rm -f "$want"
+}
+
+# Every degradation lands here: on screen when it happens, in
+# /root/missing.txt on the target, and in the end-of-run summary so a warning
+# that scrolled past during a long install is still in front of the operator
+# at the point they decide to reboot.
+record_missing() { # label  packages
+    printf '%s: %s\n' "$1" "$2" >> "$MNT/root/missing.txt"
+    INSTALL_WARNINGS=$(( ${INSTALL_WARNINGS:-0} + 1 ))
+}
+
+# Printed at the very end, immediately before the reboot instructions. A
+# warning emitted at minute four of a forty-minute install has scrolled well
+# out of sight by the time anyone reads the screen again.
+report_degradations() {
+    (( ${INSTALL_WARNINGS:-0} )) || return 0
+    printf '\033[1;33m%s\033[0m\n' "----------------------------------------------------------------" >&2
+    printf '\033[1;33m%s\033[0m\n' "INSTALLED WITH ${INSTALL_WARNINGS} WARNING(S) — THIS INSTALLER IS PROBABLY OUT OF DATE." >&2
+    printf '\033[1;33m%s\033[0m\n' "----------------------------------------------------------------" >&2
+    cat >&2 <<EOF
+
+  Some packages could not be found in the repositories, or could not be
+  installed. The system is complete enough to boot and repair itself — the
+  bootloader, kernel and base system are all in place — but part of the
+  desktop may be missing until the affected packages are sorted out.
+
+  What was skipped, and why:
+
+EOF
+    sed 's/^/    /' "$MNT/root/missing.txt" >&2
+    cat >&2 <<EOF
+
+  This list is also saved on the new system at /root/missing.txt.
+
+  A name in that list usually means the package was renamed or dropped
+  upstream since this installer's package lists were written. Check the
+  current name with 'pacman -Ss <name>' after first boot, install the
+  replacement, and update the list in packages/ so the next run is clean.
+
+EOF
 }
 
 install_packages() {
@@ -266,21 +370,42 @@ install_packages() {
     # can lag behind by the time stage 2 tries to run a prebuilt paru-bin
     # binary against it, causing an ABI mismatch (libalpm.so.N not found).
     # Arch's own guidance is to never partial-upgrade a system.
-    arch-chroot "$MNT" pacman -Syu --noconfirm
     : > "$MNT/root/missing.txt"
+    if ! arch-chroot "$MNT" pacman -Syu --noconfirm; then
+        warn "Could not refresh/upgrade the base system (network or mirror problem?)."
+        warn "    Continuing with whatever pacstrap already put on disk, so the install"
+        warn "    still reaches the bootloader. Run 'pacman -Syu' after first boot."
+        record_missing "system upgrade (pacman -Syu failed)" "base system left at pacstrap versions"
+    fi
     install_list "$HERE/packages/core.txt" "core desktop"
 
     say "Graphics: $GPU"
-    [[ "${NVIDIA_PROPRIETARY:-}" == yes ]] && GPU_PKGS="nvidia nvidia-utils"
+    # 'nvidia' and 'nvidia-dkms' were retired from the Arch repositories; the
+    # proprietary driver ships as 'nvidia-open' (the open kernel modules, which
+    # NVIDIA made the supported path). Note the open modules require Turing
+    # (RTX 20-series) or newer — on older cards the install below degrades to a
+    # warning and the system keeps the nouveau/mesa stack it already has.
+    [[ "${NVIDIA_PROPRIETARY:-}" == yes ]] && GPU_PKGS="nvidia-open nvidia-utils"
     # shellcheck disable=SC2086
-    arch-chroot "$MNT" pacman -S --needed --noconfirm $GPU_PKGS
+    install_pkgs "graphics ($GPU)" $GPU_PKGS
 
+    # Early KMS is configured only if the driver actually landed. Editing
+    # MODULES for a package that failed to install produces an initramfs that
+    # references .ko files which do not exist, and mkinitcpio's failure would
+    # then take the rest of the install down with it.
     if [[ "${NVIDIA_PROPRIETARY:-}" == yes ]]; then
-        # kms modules for early modeset — must run after the nvidia package
-        # above actually provides the .ko files, or mkinitcpio silently
-        # builds an initramfs without them.
-        arch-chroot "$MNT" sed -i 's/^MODULES=(\(.*\))/MODULES=(\1 nvidia nvidia_modeset nvidia_uvm nvidia_drm)/' /etc/mkinitcpio.conf
-        arch-chroot "$MNT" mkinitcpio -P
+        if arch-chroot "$MNT" pacman -Qq nvidia-open >/dev/null 2>&1; then
+            NVIDIA_ACTIVE=yes
+            arch-chroot "$MNT" sed -i 's/^MODULES=(\(.*\))/MODULES=(\1 nvidia nvidia_modeset nvidia_uvm nvidia_drm)/' /etc/mkinitcpio.conf
+            if ! arch-chroot "$MNT" mkinitcpio -P; then
+                warn "graphics: mkinitcpio failed after adding the NVIDIA modules."
+                warn "    Continuing; regenerate with 'mkinitcpio -P' after first boot."
+                record_missing "graphics (mkinitcpio -P failed)" "nvidia early KMS"
+            fi
+        else
+            warn "graphics: nvidia-open did not install, so early KMS was skipped."
+            warn "    The system will fall back to the in-kernel nouveau driver."
+        fi
     fi
 
     if [[ "$ASUS" == yes ]]; then
@@ -357,6 +482,7 @@ $HEVENOS_USER ALL=(ALL:ALL) NOPASSWD: ALL
 EOF
     chmod 0440 "$MNT/etc/sudoers.d/99-hevenos-stage2"
     say "Stage 1 complete."
+    report_degradations
     printf '\033[1;31mSETUP IS NOT COMPLETE.\033[0m\n' >&2
     printf '\033[1;31mDo not remove the USB drive yet.\033[0m\n' >&2
     cat >&2 <<EOF
@@ -393,7 +519,12 @@ main() {
     handoff
 }
 
-case "${1:-}" in
-    --detect) detect_all; print_detection ;;
-    *)        main ;;
-esac
+# Only run when executed. Sourcing the file defines the functions without
+# performing an install, which is what the test suite does to exercise the
+# package-installation paths against a stubbed arch-chroot.
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    case "${1:-}" in
+        --detect) detect_all; print_detection ;;
+        *)        main ;;
+    esac
+fi
