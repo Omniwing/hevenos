@@ -3,7 +3,6 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/lib/ui.sh"
 source "$HERE/lib/detect.sh"
-source "$HERE/lib/packages.sh"
 
 MNT="${HEVENOS_MNT:-/mnt}"
 NVIDIA_PROPRIETARY=""   # "yes" if the operator ASKED for the proprietary driver (collect_config)
@@ -257,110 +256,73 @@ CHROOT
 
 # Install a set of packages without ever aborting the run.
 #
-# Upstream renames and drops packages on its own schedule, and this installer
-# is a static list of names checked into git — so it goes stale by sitting
-# still. Arch retired the 'nvidia' package in favour of 'nvidia-open', which
-# turned a one-word staleness into a dead install: under 'set -e' a single
-# unresolvable name makes 'pacman -S' exit non-zero, and every step after it
-# never runs. The step after it here was install_bootloader, so the machine
-# came up with a fully-populated root filesystem and no way to boot it.
-#
-# Every target therefore gets filtered against the repo index first. Names the
-# repos no longer carry are reported on screen, counted, and appended to
-# /root/missing.txt on the target — never raised as an error. A pacman
-# transaction that fails for some other reason (a download error, a conflict)
-# is likewise downgraded to a warning: a system missing packages can be
-# repaired from itself once it boots, which is only true if the rest of the
-# install is allowed to finish.
-_install_wantfile() { # wantfile  label
-    local want="$1" label="$2" repo
+# The package lists are static names checked into git, so they go stale by
+# sitting still: Arch retired 'nvidia' for 'nvidia-open', 'pacman -S' exited
+# non-zero on the dead name, and 'set -e' killed the run six functions short
+# of install_bootloader — leaving a full root filesystem with no bootloader.
+# So targets are filtered against the repo index first, and nothing here is
+# ever fatal: a system missing packages can repair itself once it boots,
+# which is only true if the install is allowed to finish.
+install_pkgs() { # label  pkg...
+    local label="$1"; shift
+    (( $# )) || return 0
+    local index want
     local -a avail missing
-    repo="$(mktemp)"
-    if ! arch-chroot "$MNT" pacman -Slq | sort -u > "$repo"; then
-        warn "$label: could not read the package index from any configured repository."
-        warn "    Skipping this set entirely and continuing. Check the network and"
-        warn "    /etc/pacman.d/mirrorlist on the new system."
-        record_missing "$label" "$(_clean_list "$want" | tr '\n' ' ')"
-        rm -f "$repo"; return 0
-    fi
 
-    mapfile -t avail   < <(available_pkgs "$repo" "$want")
-    mapfile -t missing < <(missing_pkgs   "$repo" "$want")
-    rm -f "$repo"
+    if ! index="$(arch-chroot "$MNT" pacman -Slq | sort -u)"; then
+        warn "$label: could not read the package index from any configured repository."
+        warn "    Skipping this set. Check the network and /etc/pacman.d/mirrorlist."
+        record_missing "$label (no package index)" "$*"
+        return 0
+    fi
+    want="$(printf '%s\n' "$@" | sort -u)"
+    mapfile -t avail   < <(comm -12 <(echo "$want") <(echo "$index"))
+    mapfile -t missing < <(comm -23 <(echo "$want") <(echo "$index"))
 
     if (( ${#missing[@]} )); then
-        warn "$label: ${#missing[@]} package(s) not found in any configured repository:"
-        warn "      ${missing[*]}"
-        warn "    These names were renamed or dropped upstream, so this installer is"
-        warn "    probably out of date. Continuing without them."
+        warn "$label: not found in any configured repository: ${missing[*]}"
+        warn "    Renamed or dropped upstream; this installer is probably out of date."
+        warn "    Continuing without them."
         record_missing "$label" "${missing[*]}"
     fi
-
     if (( ${#avail[@]} )); then
         say "Installing $label: ${#avail[@]} packages"
         if ! arch-chroot "$MNT" pacman -S --needed --noconfirm "${avail[@]}"; then
-            warn "$label: pacman could not complete the transaction."
-            warn "    Continuing so the rest of the install (including the bootloader)"
-            warn "    still runs. Re-run 'pacman -S --needed' for this set after first boot."
+            warn "$label: pacman could not complete the transaction. Continuing so the"
+            warn "    install still reaches the bootloader; retry it after first boot."
             record_missing "$label (pacman transaction failed)" "${avail[*]}"
         fi
-    else
-        say "Installing $label: nothing available to install"
     fi
 }
 
-# File-backed package set (the curated lists in packages/).
+# Same, for the curated lists in packages/ (comments and blanks dropped).
 install_list() { # path-to-list  label
-    _install_wantfile "$1" "$2"
+    # shellcheck disable=SC2046
+    install_pkgs "$2" $(grep -vE '^\s*(#|$)' "$1")
 }
 
-# Inline package set, for names computed at runtime rather than read from a
-# curated file. Same filtering and same refusal to abort.
-install_pkgs() { # label  pkg...
-    local label="$1"; shift
-    (( $# )) || { say "Installing $label: nothing to do"; return 0; }
-    local want; want="$(mktemp)"
-    printf '%s\n' "$@" > "$want"
-    _install_wantfile "$want" "$label"
-    rm -f "$want"
-}
-
-# Every degradation lands here: on screen when it happens, in
-# /root/missing.txt on the target, and in the end-of-run summary so a warning
-# that scrolled past during a long install is still in front of the operator
-# at the point they decide to reboot.
 record_missing() { # label  packages
     printf '%s: %s\n' "$1" "$2" >> "$MNT/root/missing.txt"
-    INSTALL_WARNINGS=$(( ${INSTALL_WARNINGS:-0} + 1 ))
+    INSTALL_WARNINGS=$(( INSTALL_WARNINGS + 1 ))
 }
 
-# Printed at the very end, immediately before the reboot instructions. A
-# warning emitted at minute four of a forty-minute install has scrolled well
-# out of sight by the time anyone reads the screen again.
+# Printed immediately before the reboot instructions: a warning from minute
+# four of a forty-minute install has long scrolled off the screen by the time
+# anyone reads it again.
 report_degradations() {
-    (( ${INSTALL_WARNINGS:-0} )) || return 0
-    printf '\033[1;33m%s\033[0m\n' "----------------------------------------------------------------" >&2
-    printf '\033[1;33m%s\033[0m\n' "INSTALLED WITH ${INSTALL_WARNINGS} WARNING(S) — THIS INSTALLER IS PROBABLY OUT OF DATE." >&2
-    printf '\033[1;33m%s\033[0m\n' "----------------------------------------------------------------" >&2
+    (( INSTALL_WARNINGS )) || return 0
+    warn "INSTALLED WITH $INSTALL_WARNINGS WARNING(S) — THIS INSTALLER IS PROBABLY OUT OF DATE."
     cat >&2 <<EOF
 
-  Some packages could not be found in the repositories, or could not be
-  installed. The system is complete enough to boot and repair itself — the
-  bootloader, kernel and base system are all in place — but part of the
-  desktop may be missing until the affected packages are sorted out.
+  The bootloader, kernel and base system are all in place, so the machine
+  boots and can repair itself, but part of the desktop may be missing.
+  Skipped:
 
-  What was skipped, and why:
+$(sed 's/^/    /' "$MNT/root/missing.txt")
 
-EOF
-    sed 's/^/    /' "$MNT/root/missing.txt" >&2
-    cat >&2 <<EOF
-
-  This list is also saved on the new system at /root/missing.txt.
-
-  A name in that list usually means the package was renamed or dropped
-  upstream since this installer's package lists were written. Check the
-  current name with 'pacman -Ss <name>' after first boot, install the
-  replacement, and update the list in packages/ so the next run is clean.
+  Saved on the new system at /root/missing.txt. A name there was usually
+  renamed or dropped upstream: find the current one with 'pacman -Ss <name>'
+  after first boot, install it, and update the list in packages/.
 
 EOF
 }
