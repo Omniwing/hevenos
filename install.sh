@@ -134,11 +134,23 @@ install_bootloader() {
     say "Installing bootloader ($FIRMWARE)"
     local root_uuid; root_uuid="$(findmnt -no UUID "$MNT")"
     if [[ "$FIRMWARE" == uefi ]]; then
-        arch-chroot "$MNT" bootctl install
-        cat > "$MNT/boot/loader/loader.conf" <<EOF
+        # XBOOTLDR split layout for a small/shared ESP: when an ESP is mounted
+        # at $MNT/efi, install systemd-boot there but keep the kernels on the
+        # XBOOTLDR partition at $MNT/boot. This lets the target share a cramped
+        # Windows ESP (too small to hold Arch's kernels) without reformatting
+        # it — only the ~150 KB bootloader is added — and systemd-boot then
+        # auto-detects the Windows Boot Manager on that same ESP, giving one
+        # dual-boot menu with no extra config. With no $MNT/efi mount the
+        # behaviour is unchanged: ESP and boot are the same partition at /boot.
+        local esp_dir=/boot
+        mountpoint -q "$MNT/efi" && esp_dir=/efi
+        arch-chroot "$MNT" bootctl --esp-path="$esp_dir" --boot-path=/boot install
+        mkdir -p "$MNT$esp_dir/loader"
+        cat > "$MNT$esp_dir/loader/loader.conf" <<EOF
 default arch
-timeout 3
+timeout 5
 EOF
+        mkdir -p "$MNT/boot/loader/entries"
         local extra_opts=""
         [[ "${NVIDIA_PROPRIETARY:-}" == yes ]] && extra_opts=" nvidia-drm.modeset=1"
         {
