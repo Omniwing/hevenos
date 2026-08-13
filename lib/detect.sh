@@ -12,6 +12,25 @@ detect_firmware() {
     if [[ -e "$size_path" ]]; then echo uefi; else echo bios; fi
 }
 
+find_esp() { # [lsblk output]   -> one free EFI system partition per line
+    # The ESP is the one partition an installer must never create or format on
+    # a machine that already boots something else: that system's boot manager
+    # lives there, and mkfs on it is not recoverable from a live ISO. Finding
+    # it means we can add a loader beside what's already there instead of
+    # asking the operator to have mounted the right thing beforehand.
+    #
+    # RM!=1 skips the live USB the installer is running from — a UEFI install
+    # medium carries an ESP-typed partition of its own, so without this every
+    # install-from-USB finds two and cannot tell which belongs to the target.
+    # A non-empty MOUNTPOINT skips anything already in use.
+    #
+    # -F'[ ]' rather than awk's default field splitting: raw lsblk separates
+    # columns with one space and leaves empty values empty, and the default FS
+    # collapses that run, shifting every later column one to the left.
+    local out="${1-$(lsblk -rno PATH,PARTTYPE,RM,MOUNTPOINT 2>/dev/null)}"   # no colon: see is_asus_hardware
+    awk -F'[ ]' 'tolower($2)=="c12a7328-f81f-11d2-ba4b-00a0c93ec93b" && $3!="1" && $4==""{print $1}' <<<"$out"
+}
+
 cpu_vendor() { awk -F': ' '/^vendor_id/{print $2; exit}' /proc/cpuinfo; }
 
 ucode_for_vendor() {

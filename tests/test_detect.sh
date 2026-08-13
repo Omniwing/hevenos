@@ -13,6 +13,35 @@ test_detect_firmware() {
     assert_eq "$(detect_firmware "/nonexistent/efi/size")" "bios" "missing => bios"
 }
 
+test_find_esp() {
+    # Fixtures are `lsblk -rno PATH,PARTTYPE,RM,MOUNTPOINT` output verbatim:
+    # single-space separated, empty values left empty.
+    local esp=c12a7328-f81f-11d2-ba4b-00a0c93ec93b
+    local linux=0fc63daf-8483-4772-8e79-3d69d8477de4
+
+    assert_eq "$(find_esp "/dev/sda  0
+/dev/sda1 $esp 0
+/dev/sda2 $linux 0 /mnt")" "/dev/sda1" "the one free ESP"
+
+    # Already mounted — the operator is using it for something.
+    assert_eq "$(find_esp "/dev/sda1 $esp 0 /boot/efi")" "" "mounted ESP is not free"
+
+    # The live USB this installer is running from carries an ESP of its own.
+    assert_eq "$(find_esp "/dev/sdb1 $esp 1")" "" "removable ESP is skipped"
+
+    assert_eq "$(find_esp "/dev/sda1 $esp 0
+/dev/nvme0n1p1 $esp 0")" "/dev/sda1
+/dev/nvme0n1p1" "two free ESPs => two lines, caller decides"
+
+    assert_eq "$(find_esp "/dev/sda1 $linux 0
+/dev/sda2 $linux 0")" "" "no ESP anywhere"
+
+    assert_eq "$(find_esp "/dev/sda1 ${esp^^} 0")" "/dev/sda1" "type GUID is case-insensitive"
+
+    # Explicitly empty input must not fall through to a live lsblk probe.
+    assert_eq "$(find_esp "")" "" "empty input => empty, no live probe"
+}
+
 test_ucode_for_vendor() {
     assert_eq "$(ucode_for_vendor GenuineIntel)" "intel-ucode" "intel"
     assert_eq "$(ucode_for_vendor AuthenticAMD)" "amd-ucode" "amd"

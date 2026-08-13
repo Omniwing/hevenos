@@ -12,8 +12,8 @@ The deployer consists of two stages:
 ## Prerequisites
 
 - **Partitioned and mounted disks**: Before running `install.sh`, partition and format your target disk(s), then mount the root filesystem at `/mnt`.
-- **UEFI systems**: Mount the EFI System Partition (ESP) at `/mnt/boot` **before** running `install.sh`. This prevents the kernel from being shadowed by an empty ESP mounted later during system initialization.
-- **BIOS systems**: No ESP required; `/boot` will be a regular directory on the root filesystem.
+- **UEFI firmware**: Required. The installer refuses to run on a machine booted in BIOS/legacy mode.
+- **EFI System Partition**: Found and mounted automatically — including one already belonging to another installed operating system, which is mounted and added to, never formatted. To choose it yourself (or if more than one is free, in which case the installer stops and asks), mount it at `/mnt/efi` before running. `/boot` is a regular directory on the root filesystem; nothing needs to be mounted there.
 
 ## Hardware Floor
 
@@ -51,11 +51,11 @@ Replace `<repo>` with the URL of this repository.
 
 The installer will:
 
-1. **Detect hardware**: Firmware type (UEFI/BIOS), CPU vendor and microcode, GPU vendor and OpenGL-floor class (see Hardware Floor above), available RAM, network adapters.
-2. **Ask everything up front**: disk-target confirmation, hostname, timezone, username, root/user passwords, and (if an NVIDIA GPU was detected) proprietary-vs-nouveau — all asked back to back before anything long-running starts, so the rest of the install runs unattended.
+1. **Detect hardware**: Firmware type, CPU vendor and microcode, GPU vendor and OpenGL-floor class (see Hardware Floor above), available RAM, network adapters, and the EFI System Partition to install to.
+2. **Ask everything up front**: ESP confirmation, hostname, timezone, username, root/user passwords, and (if an NVIDIA GPU was detected) proprietary-vs-nouveau — all asked back to back before anything long-running starts, so the rest of the install runs unattended.
 3. **Install base system**: Base packages, Linux kernel, firmware, microcode, git, NetworkManager, sudo, and editor.
 4. **Install packages**: Core desktop packages (niri, waybar, kitty, fish, swaybg, mako, keyd, and other GUI/OS essentials — see `packages/core.txt`) plus driver packages for the detected GPU vendor. If ASUS hardware is detected (see Optional Package Lists below), its AUR packages are queued for automatic installation in Stage 2 — no prompt.
-5. **Configure bootloader**: systemd-boot on UEFI systems, GRUB (i386-pc) on BIOS systems.
+5. **Configure bootloader**: GRUB (`x86_64-efi`) installed to the ESP as `hevenos`, with `os-prober` enabled so any other operating system already on the machine gets its own menu entry. Kernels stay on the root filesystem, so a small ESP shared with another OS needs no extra partition.
 6. **Enable services**: NetworkManager, wpa_supplicant, chrony, Bluetooth, acpid, keyd; disable iwd to avoid conflicts.
 7. **Configure keyd**: Deploy `/etc/keyd/default.conf` (capslock remapped to an extra Super/Mod key) — a system-level file outside the home-relative tarball, recreated on every target.
 8. **Migrate WiFi credentials**: The live ISO connects to wifi via `iwd`, not NetworkManager, so those saved credentials don't carry over on their own. Any saved WPA/WPA2-personal network is converted to a NetworkManager connection profile on the target, so it auto-connects on first real boot with no re-entry of the password. (Enterprise wifi or open networks aren't covered by this and fall back to Stage 2's `nmtui` prompt.)

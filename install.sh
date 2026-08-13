@@ -11,6 +11,7 @@ NVIDIA_ACTIVE=""        # "yes" only once the driver is CONFIRMED installed (ins
                         # nvidia-drm.modeset=1 on a machine running nouveau is a lie in the
                         # bootloader config that outlives the install.
 INSTALL_WARNINGS=0      # count of degradations (missing packages, failed transactions)
+ESP=""                  # the EFI system partition, resolved in preflight (resolve_esp)
 
 detect_all() {
     is_x86_64 || die "This machine is not x86_64; mainline Arch is x86_64-only."
@@ -25,7 +26,6 @@ detect_all() {
         BROADCOM=yes; else BROADCOM=no; fi
     if is_asus_hardware; then ASUS=yes; else ASUS=no; fi
     ROOT_SRC="$(findmnt -no SOURCE "$MNT" 2>/dev/null || echo '?')"
-    DISK="/dev/$(lsblk -no PKNAME "$ROOT_SRC" 2>/dev/null | head -1 || true)"
 }
 
 print_detection() {
@@ -37,36 +37,66 @@ print_detection() {
   ram (kB) : $RAM_KB  (swap: $(needs_swap "$RAM_KB" && echo yes || echo no))
   broadcom : $BROADCOM
   asus     : $ASUS
-  target   : $MNT on $ROOT_SRC (disk $DISK)
+  target   : $MNT on $ROOT_SRC
 EOF
 }
 
 preflight() {
     [[ $EUID -eq 0 ]] || die "Stage 1 must run as root in the live ISO."
     mountpoint -q "$MNT" || die "$MNT is not mounted. Partition/format/mount first."
-    if [[ "$FIRMWARE" == uefi ]]; then
-        mountpoint -q "$MNT/boot" || die "UEFI: mount the ESP at $MNT/boot before running (avoids kernel shadowing)."
-    fi
+    # UEFI only. BIOS/MBR is where an installer writes boot code to a whole
+    # disk and clobbers the wrong one; keeping that path alive would double
+    # this function and install_bootloader for hardware this project no
+    # longer targets.
+    [[ "$FIRMWARE" == uefi ]] || die "This machine booted in BIOS/legacy mode. hevenos installs UEFI-only — switch the firmware out of legacy/CSM mode and boot the live medium again."
     ping -c1 -W3 archlinux.org >/dev/null 2>&1 || warn "Network check failed; continuing but pacstrap may fail."
     if [[ "$GL_FLOOR" == below ]]; then
         die "This GPU is below the supported hardware floor (OpenGL 3.3-class needed — roughly Intel HD 3000 / 2011 or newer; see README). kitty hard-requires OpenGL 3.3 and niri's theme shaders exceed this chip's limits. Unsupported — no install possible on this hardware."
     fi
-    if [[ "$FIRMWARE" == bios ]]; then
-        [[ -b "$DISK" ]] || die "Could not determine a valid disk for GRUB (got '$DISK'). Check that $MNT is mounted on a real partition, then rerun."
+    resolve_esp
+}
+
+# Mounted, never created and never formatted. Whatever else the machine boots
+# keeps its boot manager on this partition; we add a loader beside it. An
+# installer that can create partitions is an installer that can destroy the
+# wrong disk, so both failure cases below exit with the command to run instead.
+#
+# Nothing is mounted until after the operator has confirmed: mounting first
+# would leave $MNT/efi mounted on a refusal, and the next run would then read
+# the just-rejected partition back as the operator's own choice.
+resolve_esp() {
+    local mounted=""
+    if mountpoint -q "$MNT/efi"; then
+        ESP="$(findmnt -no SOURCE "$MNT/efi")"; mounted=yes
+        say "Using the EFI system partition already mounted at $MNT/efi ($ESP)"
+    else
+        local -a esps
+        mapfile -t esps < <(find_esp)
+        case ${#esps[@]} in
+            1)  ESP="${esps[0]}"
+                say "Found EFI system partition $ESP (it will be mounted, never formatted)" ;;
+            0)  die "No EFI system partition found. Create one (100 MiB is plenty) and format it:
+    sgdisk -n 0:0:+100M -t 0:ef00 /dev/<disk> && mkfs.fat -F32 /dev/<new-partition>
+  Then rerun. If one already exists, mount it at $MNT/efi yourself and rerun." ;;
+            *)  die "More than one EFI system partition is free to use:
+    ${esps[*]}
+  Pick the one this machine's firmware boots from, then rerun:
+    mount --mkdir <partition> $MNT/efi" ;;
+        esac
     fi
-    say "Target disk for bootloader: $DISK"
-    ask_yes_no "Install bootloader to $DISK?" y || die "Aborted at disk confirmation."
+    ask_yes_no "Add a boot entry to $ESP?" y || die "Aborted at bootloader confirmation."
+    if [[ -z "$mounted" ]]; then
+        mount --mkdir "$ESP" "$MNT/efi" || die "Could not mount $ESP at $MNT/efi."
+    fi
 }
 
 base_install() {
     say "Refreshing package databases"
     pacman -Sy --noconfirm
     say "pacstrap base system + microcode ($UCODE)"
-    local bootloader_pkg=""
-    [[ "$FIRMWARE" == bios ]] && bootloader_pkg="grub"
     # shellcheck disable=SC2086
     pacstrap "$MNT" base base-devel linux linux-firmware linux-headers \
-        git networkmanager wpa_supplicant sudo vim nano $UCODE $bootloader_pkg
+        git networkmanager wpa_supplicant sudo vim nano grub efibootmgr os-prober $UCODE
     genfstab -U "$MNT" >> "$MNT/etc/fstab"
 }
 
@@ -134,43 +164,26 @@ _read_secret() { # label
     done
 }
 
+# GRUB rather than systemd-boot for one reason: it reads ext4, so the kernels
+# stay on the root filesystem and the only thing this adds to the ESP is a
+# loader. systemd-boot can only load kernels from FAT, which on a machine whose
+# ESP already belongs to another OS (they are routinely 100 MiB, too small for
+# Arch's initramfs) means carving a second FAT partition on every target just
+# to hold them. Nothing here needs the operator to have prepared a boot
+# layout beyond a mounted root, and grub-mkconfig writes the menu entries that
+# were previously hand-assembled here.
 install_bootloader() {
-    say "Installing bootloader ($FIRMWARE)"
-    local root_uuid; root_uuid="$(findmnt -no UUID "$MNT")"
-    if [[ "$FIRMWARE" == uefi ]]; then
-        # XBOOTLDR split layout for a small/shared ESP: when an ESP is mounted
-        # at $MNT/efi, install systemd-boot there but keep the kernels on the
-        # XBOOTLDR partition at $MNT/boot. This lets the target share a cramped
-        # Windows ESP (too small to hold Arch's kernels) without reformatting
-        # it — only the ~150 KB bootloader is added — and systemd-boot then
-        # auto-detects the Windows Boot Manager on that same ESP, giving one
-        # dual-boot menu with no extra config. With no $MNT/efi mount the
-        # behaviour is unchanged: ESP and boot are the same partition at /boot.
-        local esp_dir=/boot
-        mountpoint -q "$MNT/efi" && esp_dir=/efi
-        arch-chroot "$MNT" bootctl --esp-path="$esp_dir" --boot-path=/boot install
-        mkdir -p "$MNT$esp_dir/loader"
-        cat > "$MNT$esp_dir/loader/loader.conf" <<EOF
-default arch
-timeout 5
-EOF
-        mkdir -p "$MNT/boot/loader/entries"
-        local extra_opts=""
-        [[ "${NVIDIA_ACTIVE:-}" == yes ]] && extra_opts=" nvidia-drm.modeset=1"
-        {
-            echo "title   Arch Linux (hevenos)"
-            echo "linux   /vmlinuz-linux"
-            [[ -n "$UCODE" ]] && echo "initrd  /$UCODE.img"
-            echo "initrd  /initramfs-linux.img"
-            echo "options root=UUID=$root_uuid rw$extra_opts"
-        } > "$MNT/boot/loader/entries/arch.conf"
-    else
-        if [[ "${NVIDIA_ACTIVE:-}" == yes ]]; then
-            arch-chroot "$MNT" sed -i 's/^GRUB_CMDLINE_LINUX_DEFAULT="\(.*\)"/GRUB_CMDLINE_LINUX_DEFAULT="\1 nvidia-drm.modeset=1"/' /etc/default/grub
-        fi
-        arch-chroot "$MNT" grub-install --target=i386-pc "$DISK"
-        arch-chroot "$MNT" grub-mkconfig -o /boot/grub/grub.cfg
+    say "Installing bootloader (GRUB, UEFI)"
+    if [[ "${NVIDIA_ACTIVE:-}" == yes ]]; then
+        arch-chroot "$MNT" sed -i 's/^GRUB_CMDLINE_LINUX_DEFAULT="\(.*\)"/GRUB_CMDLINE_LINUX_DEFAULT="\1 nvidia-drm.modeset=1"/' /etc/default/grub
     fi
+    # Arch ships os-prober disabled; without it the menu offers no entry for
+    # whatever else is installed on the machine and dual-boot silently isn't.
+    arch-chroot "$MNT" sed -i 's/^#\?GRUB_DISABLE_OS_PROBER=.*/GRUB_DISABLE_OS_PROBER=false/' /etc/default/grub
+    # Never --removable: that writes /EFI/BOOT/BOOTX64.EFI, which on a shared
+    # ESP overwrites the fallback loader belonging to the other system.
+    arch-chroot "$MNT" grub-install --target=x86_64-efi --efi-directory=/efi --bootloader-id=hevenos
+    arch-chroot "$MNT" grub-mkconfig -o /boot/grub/grub.cfg
 }
 
 enable_services() {
