@@ -34,6 +34,29 @@ test_configure_protects_usb_even_when_not_removable() {
     assert_false _cfg_call 'cfg_usb_or_removable_evidence sata 0 /sys/devices/pci "ID_BUS=ata"'
 }
 
+test_configure_preflight_succeeds_on_a_ready_machine() {
+    # Regression: cfg_preflight used to end in 'cfg_mounts_under_target && die'.
+    # On a healthy machine nothing is mounted at $MNT, so that list -- and with
+    # it the whole function -- returned 1, 'set -e' killed configure inside
+    # main, and the ERR trap printed nothing because no disk had been touched
+    # yet. ./configure did nothing at all, with no output and no explanation.
+    local out
+    out="$(_cfg_call '
+        cfg_running_as_root() { return 0; }
+        cfg_has_terminal() { return 0; }
+        cfg_on_live_iso() { return 0; }
+        cfg_require_commands() { return 0; }
+        is_x86_64() { return 0; }
+        detect_firmware() { echo uefi; }
+        gpu_below_gl_floor() { return 1; }
+        MNT=/no-such-hevenos-target
+        cfg_preflight
+        echo PREFLIGHT_RETURNED
+    ' 2>&1 || true)"
+    assert_eq "$out" "PREFLIGHT_RETURNED" \
+        "cfg_preflight returns success, silently, when the machine is ready to install"
+}
+
 test_configure_is_source_safe() {
     assert_eq "$(bash -c 'source "$1"' _ "$_cfg_script")" "" \
         "sourcing configure does not run disk discovery or prompts"

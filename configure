@@ -479,10 +479,14 @@ cfg_require_commands() {
         || die "The live environment is missing required tools: ${missing[*]}"
 }
 
+cfg_running_as_root() { [[ $EUID -eq 0 ]]; }
+cfg_has_terminal()    { [[ -t 0 ]]; }
+cfg_on_live_iso()     { [[ -d /run/archiso ]]; }
+
 cfg_preflight() {
-    [[ $EUID -eq 0 ]] || die "Run configure as root from the Arch Linux live ISO."
-    [[ -t 0 ]] || die "configure is interactive and requires a terminal on standard input."
-    [[ -d /run/archiso ]] || die "configure only runs from the Arch Linux live ISO."
+    cfg_running_as_root || die "Run configure as root from the Arch Linux live ISO."
+    cfg_has_terminal || die "configure is interactive and requires a terminal on standard input."
+    cfg_on_live_iso || die "configure only runs from the Arch Linux live ISO."
     cfg_require_commands
     is_x86_64 || die "This machine is not x86_64; mainline Arch is x86_64-only."
     [[ "$(detect_firmware)" == uefi ]] \
@@ -490,8 +494,13 @@ cfg_preflight() {
     if gpu_below_gl_floor "$(lspci -nn 2>/dev/null || true)"; then
         die "This GPU is below HevenOS's OpenGL 3.3 hardware floor. The disk was not changed."
     fi
-    cfg_mounts_under_target \
-        && die "$MNT or a directory beneath it is already mounted. Unmount the old target before running configure."
+    # An 'if', not 'cfg_mounts_under_target && die': as a trailing && list this
+    # returns 1 whenever nothing is mounted -- the healthy case -- making
+    # cfg_preflight itself return 1, at which point 'set -e' kills configure in
+    # main before a single line is printed.
+    if cfg_mounts_under_target; then
+        die "$MNT or a directory beneath it is already mounted. Unmount the old target before running configure."
+    fi
 }
 
 cfg_intro() {
@@ -517,6 +526,11 @@ cfg_on_error() {
     if [[ "$CFG_DESTRUCTIVE_STARTED" == yes ]]; then
         warn "Disk preparation failed at line $line. The selected disk may now be only partially prepared."
         warn "Do not run install.sh; inspect the disk and rerun configure from the beginning."
+    else
+        # A deliberate refusal calls die, which prints and exits on its own. Any
+        # other non-zero return lands here, so an unexpected exit can never look
+        # like configure simply doing nothing.
+        warn "configure stopped unexpectedly at line $line (exit $rc). No disk was changed."
     fi
     exit "$rc"
 }

@@ -10,9 +10,12 @@ for f in test_*.sh; do
     source "./$f"
 done
 
-# Run every function named test_*
+# Run every function named test_*. The '|| true' is load-bearing: sourcing
+# install.sh or configure turns 'set -e' back on in this shell, and without it
+# one failing statement inside one test aborts the whole run -- no summary, no
+# exit code that says which test, nothing.
 for fn in $(declare -F | awk '{print $3}' | grep '^test_'); do
-    "$fn"
+    "$fn" || true
 done
 
 printf '\n%d passed, %d failed\n' "$PASSED" "$FAILED"
