@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 _root="$(dirname "${BASH_SOURCE[0]}")/.."
 _has() { grep -qxF "$2" "$_root/$1"; }   # file pkg
 

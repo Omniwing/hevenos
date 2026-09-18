@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # Dependency-free assertion helpers. Sourced by test files.
 # On failure, increments FAILED and prints a diagnostic; never exits (so all
 # tests run). run.sh inspects FAILED.

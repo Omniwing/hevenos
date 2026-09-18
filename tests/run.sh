@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -uo pipefail
-cd "$(dirname "$0")"
+cd "$(dirname "$0")" || exit 1
+# shellcheck disable=SC1091
 source ./assert.sh
 
 shopt -s nullglob

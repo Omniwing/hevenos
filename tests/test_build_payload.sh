@@ -1,18 +1,18 @@
+# shellcheck shell=bash
+# shellcheck disable=SC1091
 source "$(dirname "${BASH_SOURCE[0]}")/../tools/build-payload.sh"
 
 test_build_payload_scrubs() {
     work="$(mktemp -d)"
     src_root="$work/src"
     mkdir -p "$src_root/.config/fish" "$src_root/.local/bin"
-    printf 'SETUVAR --export OPENAI_API_KEY:sk\\x2dproj\\x2dLEAK\n' \
-        > "$src_root/.config/fish/fish_variables"
-    printf 'SETUVAR --export openai_api_key:sk\\x2dproj\\x2dLEAK2\n' \
-        >> "$src_root/.config/fish/fish_variables"
-    printf 'SETUVAR __fish_initialized:4300\n' \
-        >> "$src_root/.config/fish/fish_variables"
-    # Cached tide prompt bakes in the source user@host — must be scrubbed.
-    printf 'SETUVAR _tide_prompt_2881:srcuser\\x40srchost\n' \
-        >> "$src_root/.config/fish/fish_variables"
+    {
+        printf 'SETUVAR --export OPENAI_API_KEY:sk\\x2dproj\\x2dLEAK\n'
+        printf 'SETUVAR --export openai_api_key:sk\\x2dproj\\x2dLEAK2\n'
+        printf 'SETUVAR __fish_initialized:4300\n'
+        # Cached tide prompt bakes in the source user@host — must be scrubbed.
+        printf 'SETUVAR _tide_prompt_2881:srcuser\\x40srchost\n'
+    } > "$src_root/.config/fish/fish_variables"
     : > "$src_root/.config/fish/fish_variablescV1lM2c1Kr"
     ln -s /nonexistent/claude      "$src_root/.local/bin/claude"
     ln -s /nonexistent/terminalgpt "$src_root/.local/bin/terminalgpt"
