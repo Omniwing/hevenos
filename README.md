@@ -1,144 +1,121 @@
-# Hevenos Deployer
+# hevenos
 
-A two-stage Arch Linux installer for replicating a Wayland-based desktop environment (niri compositor, fish shell, custom theming) onto target machines.
+An Arch Linux installer that produces a ready-to-use Wayland desktop — the
+[niri](https://github.com/YaLTeR/niri) compositor, fish, kitty and waybar —
+in two stages: one in the live ISO, one that finishes itself at first login.
 
-## Overview
+## Requirements
 
-The deployer consists of two stages:
+- x86_64 machine with **UEFI** firmware. BIOS/legacy boot is refused.
+- An **OpenGL 3.3-class GPU**: roughly Intel HD Graphics 3000 (2011) or newer,
+  and any AMD or NVIDIA silicon from 2007 onward. kitty and niri's theme
+  shaders both require it. Below-floor GPUs — Intel gen2/gen3 through
+  GMA 3150, and the PowerVR GMA 500/600/3600 line — are detected at preflight
+  and refused before anything is written to disk. There is no fallback
+  desktop; this targets niri/Wayland only.
+- A target disk, either prepared by `configure` or by hand.
 
-- **Stage 1** runs in the live ISO as root: base system installation, package lists, bootloader setup, and config deployment.
-- **Stage 2** runs automatically the first time you log in after reboot (as the regular user): AUR package installation and font cache refresh. No manual step needed — see [Stage 2](#stage-2-post-boot-user-setup) below.
+## Install
 
-## Prerequisites
-
-- **A target disk**: For a fresh whole-disk install, run `./configure` first. It interactively selects an unused internal disk, repartitions and formats it, then mounts it for `install.sh`. This destroys everything on the selected disk. For dual boot or a custom layout, skip `configure`, prepare the partitions manually, and mount root at `/mnt`.
-- **UEFI firmware**: Required. The installer refuses to run on a machine booted in BIOS/legacy mode.
-- **EFI System Partition**: Found and mounted automatically — including one already belonging to another installed operating system, which is mounted and added to, never formatted. To choose it yourself (or if more than one is free, in which case the installer stops and asks), mount it at `/mnt/efi` before running. `/boot` is a regular directory on the root filesystem; nothing needs to be mounted there.
-
-## Hardware Floor
-
-The desktop has one hard requirement the installer enforces: an **OpenGL
-3.3-class GPU** — roughly Intel HD Graphics 3000 (2011) or newer, and any
-AMD/NVIDIA silicon from 2007 onward. Two package choices drive this floor:
-
-- **kitty** refuses to start without OpenGL 3.3.
-- **niri**'s theme effects are GLES fragment shaders that exceed pre-GL3
-  hardware limits (Intel gen3 caps near 64 ALU instructions; the border
-  shader alone needs ~253).
-
-Preflight detects the known below-floor GPUs — Intel gen2/gen3 integrated
-graphics (through Pineview / GMA 3150, the 2008–2010 Atom netbook line) and
-the PowerVR-based GMA 500/600/3600 line, which has no usable 3D driver at
-all — and **refuses to install**: no disk write happens. There is no
-fallback desktop; this project targets niri/Wayland only. (A separate,
-unrelated project — `legacyheven` — is tracking a lighter, theme-free
-desktop for hardware below this floor; not part of this repo.) Both PCI-ID
-sets are closed (taken verbatim from the kernel's own tables), so the check
-never needs maintenance. Everything x86_64 above that floor is fair game.
-
-## Stage 1: Live ISO Installation
-
-Boot the Arch Linux live ISO and run the following commands:
+Boot the Arch Linux live ISO and run:
 
 ```bash
 pacman -Sy git
 git clone https://github.com/Omniwing/hevenos.git
 cd hevenos
-./configure
+./configure      # optional; prepares a whole disk
 ./install.sh
 ```
 
-`configure` is the fresh-install path. It performs all hardware compatibility
-checks before touching storage, displays each candidate's model, size,
-connection, filesystems and mount points, then requires both an exact capital
-`Y` and an exact `CONFIRM`. USB/removable disks — including an ArchISO copied
-to RAM — are never offered. Mounted disks, active device-mapper/RAID stacks,
-read-only disks, and disks too small to retain a useful root filesystem are
-also excluded. The resulting GPT layout is:
+Then reboot and remove the installation media.
 
-| Partition | Size | Format | Mount/use |
+### configure
+
+`configure` prepares one entire internal disk and mounts it for `install.sh`:
+
+| Partition | Size | Format | Mounted at |
 |---|---:|---|---|
 | EFI system | 1 GiB | FAT32 | `/mnt/efi` |
-| Swap | 4–8 GiB, based on RAM and disk size | Linux swap | activated by `install.sh` |
-| Root | remainder (at least 24 GiB) | ext4 | `/mnt` |
+| Swap | 4–8 GiB, from RAM and disk size | swap | — |
+| Root | remainder, at least 24 GiB | ext4 | `/mnt` |
 
-The swap sizing is for memory pressure, not hibernation; HevenOS does not
-currently configure resume-from-hibernation. `install.sh` enables weekly
-`fstrim.timer` for SSD/NVMe storage (and it safely skips unsupported disks).
-Partitioning and filesystem creation make old data inaccessible but are not a
-secure full-device overwrite.
+It destroys everything on the disk it is given, and asks for two explicit
+confirmations first. USB and removable disks, mounted disks, active
+RAID/device-mapper stacks, read-only disks and disks too small for a usable
+root are never offered as candidates.
 
-The installer will:
+Skip it for dual boot or any custom layout: partition the disk yourself and
+mount root at `/mnt`. An existing EFI System Partition is found and mounted
+automatically — including one belonging to another operating system, which is
+added to and never formatted. To choose it yourself, mount it at `/mnt/efi`
+beforehand. `/boot` is a regular directory on the root filesystem.
 
-1. **Detect hardware**: Firmware type, CPU vendor and microcode, GPU vendor and OpenGL-floor class (see Hardware Floor above), available RAM, network adapters, and the EFI System Partition to install to.
-2. **Ask everything up front**: ESP confirmation, hostname, timezone, username, root/user passwords, and (if an NVIDIA GPU was detected) proprietary-vs-nouveau — all asked back to back before anything long-running starts, so the rest of the install runs unattended.
-3. **Install base system**: Base packages, Linux kernel, firmware, microcode, git, NetworkManager, sudo, and editor.
-4. **Bring up swap**: Activate the swap partition `configure` prepared — only that partition's UUID reaches the target's fstab, never the live ISO's own swap — or, on a manually partitioned disk with no swap partition and 2 GiB of RAM or less, create a 2 GiB `/swapfile`. This runs before the long package transactions, which is when a low-memory machine needs it most.
-5. **Install packages**: Core desktop packages (niri, waybar, kitty, fish, swaybg, mako, keyd, firefox, nautilus, celluloid/mpv, and other GUI/OS essentials — see `packages/core.txt`) plus driver packages for the detected GPU vendor. If ASUS hardware is detected (see Optional Package Lists below), its AUR packages are queued for automatic installation in Stage 2 — no prompt.
-6. **Configure bootloader**: GRUB (`x86_64-efi`) installed to the ESP as `hevenos`, with `os-prober` enabled so any other operating system already on the machine gets its own menu entry. Kernels stay on the root filesystem, so a small ESP shared with another OS needs no extra partition.
-7. **Enable services**: NetworkManager, wpa_supplicant, chrony, Bluetooth, acpid, keyd, and weekly fstrim; disable iwd to avoid conflicts.
-8. **Configure keyd**: Deploy `/etc/keyd/default.conf` (capslock remapped to an extra Super/Mod key) — a system-level file outside the home-relative tarball, recreated on every target.
-9. **Set default applications**: Deploy `/etc/xdg/mimeapps.list` — Firefox for `http`/`https`, Nautilus for folders, Celluloid for video. Another system-level file the home-relative tarball can't carry. Without it nothing is registered as a handler, so `xdg-open` has nothing to launch and a link clicked in a terminal appears to do nothing at all. A user's own `~/.config/mimeapps.list` still overrides it.
+## How it works
 
-10. **Migrate WiFi credentials**: The live ISO connects to wifi via `iwd`, not NetworkManager, so those saved credentials don't carry over on their own. Any saved WPA/WPA2-personal network is converted to a NetworkManager connection profile on the target, so it auto-connects on first real boot with no re-entry of the password. (Enterprise wifi or open networks aren't covered by this and fall back to Stage 2's `nmtui` prompt.)
-11. **Deploy config**: Extract the desktop environment tarball and set fish as the login shell. The niri config gains a `dbus-update-activation-environment` line if it doesn't already have one: niri started from a login shell leaves `systemd --user` without `WAYLAND_DISPLAY`, so `xdg-desktop-portal-gtk` dies with "cannot open display" and Firefox's Save As, file pickers and print dialog silently do nothing. The config is username-agnostic (all paths are `$HOME`-relative), so nothing needs rewriting for the chosen user.
+**Stage 1** (`install.sh`, as root in the live ISO) detects the hardware, asks
+for everything it needs up front — hostname, timezone, user, passwords, and
+the NVIDIA driver choice if one applies — then runs unattended: base system,
+swap, packages and GPU drivers, bootloader, services, the system files the
+desktop needs, WiFi migration, and finally the desktop config unpacked from
+`payload/desktop-env.tar.gz`. Nothing after the package stage is allowed to be
+fatal, so a package that has been renamed or retired upstream is recorded and
+skipped rather than leaving a machine without a bootloader.
 
-At the end of Stage 1, reboot and remove the installation media.
+**Stage 2** (`stage2.sh`) is left on the target and fires from the login shell
+the first time you log in at a console. It upgrades the system and installs
+whatever is left — from the official repositories wherever they carry it,
+building from the AUR only where that is genuinely the only source — refreshes
+the font cache, then removes itself.
 
-## Stage 2: Post-Boot User Setup
+## What gets installed
 
-Stage 2 runs **automatically** — there's nothing to type. The first time you log in at the console (as the regular user created in Stage 1), the login banner detects that setup isn't finished yet and runs `stage2.sh` for you before handing control back:
+- **Desktop**: niri, waybar, mako, fuzzel, swaybg, swaylock, kitty, fish
+- **Applications**: Firefox, Nautilus, Celluloid/mpv — registered as the
+  defaults for links, folders, images, PDFs, audio and video
+- **Boot**: GRUB with `os-prober`, so any other operating system already on
+  the machine keeps its own menu entry
+- **System**: NetworkManager with wpa_supplicant, Bluetooth, chrony, acpid,
+  pipewire, weekly `fstrim`, and capslock remapped to an extra Super key
+- **Drivers** for the detected GPU. ASUS and Broadcom hardware are detected
+  automatically and their packages installed without prompting.
 
-```
-  >> Setup isn't finished — finishing it automatically now.
-  >> This installs AUR packages and can take a while on slow hardware.
-```
+WiFi credentials saved in the live ISO are carried over to the installed
+system, so it reconnects on first boot without retyping a password.
 
-This fires from a `fish_greeting` function (fish is the login shell), with a `.bash_profile` fallback in case fish never became the login shell on a given machine. It only triggers on a plain console/TTY login, not inside an already-running desktop session. If it's interrupted before the package stage (no network yet, a failed system upgrade, reboot, walking away) it simply retries on your next login — safe to log out/in or reboot again. An optional package that can never install won't trap it in that loop: setup finishes and records the name instead. Once it succeeds, `stage2.sh` deletes itself and revokes the temporary passwordless-sudo grant Stage 1 set up for the unattended build (everyday `sudo` stays password-protected from then on), so the banner instead greets you with:
+## First login
 
-```
-  >> type 'niri' to start the desktop
-```
+Nothing to type: Stage 2 starts on its own at the first console login.
 
-You can still run `./stage2.sh` manually if you want to watch it run or kick it off before logging out/in.
+- Interrupted by a missing network or a reboot? It retries at the next login.
+- A package that cannot be installed is recorded in
+  `~/hevenos-packages-failed.txt`; setup still finishes.
+- The temporary passwordless sudo it uses is revoked when it is done, leaving
+  everyday `sudo` password-protected.
 
-Stage 2 does the following:
-
-1. **Wait for network**: poll for real DNS resolution rather than assuming it's ready immediately at login; if it's still not up after ~15s, open `nmtui` so you can pick a network, then keep polling.
-2. **Full system upgrade, then install the remaining packages**: `pacman -Syu` first (time may have passed since Stage 1), then each package in `packages/aur.txt`. Anything the official repositories ship is installed with `pacman` — packages do graduate out of the AUR (`asusctl`, `rog-control-center` and `broadcom-wl-dkms` all have), and the AUR leaves the old repository in place but *empty* rather than deleting it, so building first turns an official package into a hard failure. Only what's genuinely AUR-only is built, directly with `makepkg` — no AUR helper. We only ever install a small, fixed, hand-picked list, so paru/yay's extra convenience isn't needed, and it avoids the class of bug where a prebuilt AUR-helper binary is linked against a `libalpm` version that's since moved on. A package that can't be installed is reported and skipped, not fatal: the names land in `~/hevenos-packages-failed.txt` and the rest of setup still finishes.
-3. **Install optional AUR packages**: If ASUS hardware was auto-detected during Stage 1 (marker file `.hevenos-asus`), install packages from `packages/optional/asus.txt` the same way — from the official repositories, since `asusctl` and `rog-control-center` both live in `extra` now.
-4. **Install Broadcom WiFi drivers**: If Broadcom wireless was detected during Stage 1 (marker file `.hevenos-broadcom`), install `broadcom-wl-dkms` (also in `extra` now, so no build).
-5. **Refresh font cache**: Rebuild the font cache for newly installed fonts.
-6. **Revoke temporary sudo and self-delete**: remove the passwordless-sudo grant and `stage2.sh` itself, marking setup complete.
-
-After Stage 2 completes, start the desktop:
+When it finishes, start the desktop:
 
 ```bash
 niri
 ```
 
-## Optional Package Lists
+## Repository layout
 
-Nothing here is prompted for — the installer auto-detects what applies and asks nothing:
+| Path | Contents |
+|---|---|
+| `packages/core.txt` | Installed on every machine |
+| `packages/aur.txt` | Extra packages for Stage 2; empty by default |
+| `packages/optional/asus.txt` | Installed when ASUS hardware is detected |
+| `packages/optional/{fonts-extra,security-tools}.txt` | Not installed; `pacman -S --needed - < <list>` |
+| `payload/desktop-env.tar.gz` | Desktop config: niri, fish, kitty, waybar, GTK, icons, wallpapers, `~/.local/bin` |
+| `overlay/` | System files: keyd, default applications, login banner |
+| `tests/` | `bash tests/run.sh` |
 
-- **`asus`**: ASUS laptop-specific tools and drivers (AUR packages). Auto-detected from the DMI vendor string (`/sys/class/dmi/id/sys_vendor`) at preflight; a match writes marker file `.hevenos-asus` in Stage 1, which Stage 2 uses to install `packages/optional/asus.txt`.
-- **`fonts-extra`** and **`security-tools`**: Native-repo package lists (extended font/Unicode coverage; security and cryptography utilities) kept in the repo for reference, but no longer installed or offered by the installer. Install by hand if wanted: `pacman -S --needed - < packages/optional/<list>.txt`.
+Every path in the payload is `$HOME`-relative, so the same tarball works for
+whatever username is chosen at install time.
 
-Broadcom WiFi detection is likewise automatic; if present, Stage 1 writes marker file `.hevenos-broadcom`, and Stage 2 installs `broadcom-wl-dkms`.
+## Notes
 
-## Configuration
-
-The desktop environment is deployed from `payload/desktop-env.tar.gz`, which contains:
-
-- `.config/niri/config.kdl`: Compositor configuration (spawns waybar, mako, swayidle, swaybg on startup).
-- `.config/fish/config.fish`: Fish shell configuration.
-- `.config/kitty/`, `.config/waybar/`, `.config/gtk-3.0/`, `.config/gtk-4.0/`: Application configs.
-- `.local/bin/`: Custom scripts (e.g., `lid-handler` for laptop power management).
-- `.local/share/icons/`: Custom icon sets.
-- `Pictures/Wallpapers/`: Wallpaper images (including `cyberpunk-80s-neon.jpg`).
-
-**Username-agnostic paths**: The config references `$HOME` rather than any absolute `/home/<user>` path. In `.config/fish/config.fish` fish expands `$HOME` directly; in `.config/niri/config.kdl` the `swaybg` and `lid-handler` startup entries are launched through `bash -c` so `$HOME` expands at runtime. Nothing is rewritten at install time, and the config works unchanged for whatever username is chosen.
-
-   - HP netbook (legacy BIOS, Intel integrated GPU, 1–2 GiB RAM): Baseline for real-world performance.
-   - Other machines with varying firmware types, GPUs, and RAM as available.
-   - Verify all deployment stages, desktop launch, and basic functionality.
+- Swap is sized for memory pressure, not hibernation; resume-from-disk is not
+  configured.
+- Partitioning and formatting make old data inaccessible, but are not a secure
+  full-device erase.
