@@ -1,0 +1,29 @@
+# System-wide default applications, installed to /etc/xdg/mimeapps.list.
+#
+# Without a file like this, a fresh install has no handler registered for
+# anything: xdg-open has nothing to launch, so clicking a link in kitty or in
+# Claude Code silently does nothing at all, and opening a folder or a video
+# fails the same quiet way. The desktop-env tarball is home-relative and
+# carries no mimeapps.list, so this is the only place these defaults are set.
+#
+# A user's own ~/.config/mimeapps.list takes precedence over this file, so
+# anyone who picks a different browser or player later keeps that choice.
+
+[Default Applications]
+text/html=firefox.desktop
+x-scheme-handler/http=firefox.desktop
+x-scheme-handler/https=firefox.desktop
+x-scheme-handler/about=firefox.desktop
+x-scheme-handler/unknown=firefox.desktop
+
+inode/directory=org.gnome.Nautilus.desktop
+
+video/mp4=io.github.celluloid_player.Celluloid.desktop
+video/mpeg=io.github.celluloid_player.Celluloid.desktop
+video/ogg=io.github.celluloid_player.Celluloid.desktop
+video/quicktime=io.github.celluloid_player.Celluloid.desktop
+video/webm=io.github.celluloid_player.Celluloid.desktop
+video/x-flv=io.github.celluloid_player.Celluloid.desktop
+video/x-matroska=io.github.celluloid_player.Celluloid.desktop
+video/x-msvideo=io.github.celluloid_player.Celluloid.desktop
+video/x-ms-wmv=io.github.celluloid_player.Celluloid.desktop

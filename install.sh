@@ -223,6 +223,15 @@ configure_keyd() {
     install -Dm644 "$HERE/overlay/keyd-default.conf" "$MNT/etc/keyd/default.conf"
 }
 
+configure_default_apps() {
+    # Same category as keyd: a system file the home-relative tarball cannot
+    # carry. Without it no application is registered for http/https, so
+    # xdg-open has nothing to launch and a link clicked in a terminal appears
+    # to do nothing whatsoever.
+    say "Setting default applications (firefox, nautilus, celluloid)"
+    install -Dm644 "$HERE/overlay/mimeapps.list" "$MNT/etc/xdg/mimeapps.list"
+}
+
 migrate_wifi_credentials() {
     # The Arch live ISO connects to wifi via iwd (iwctl), not
     # NetworkManager — those saved credentials never make it onto the
@@ -468,6 +477,35 @@ install_packages() {
     fi
 }
 
+ensure_portal_environment() {
+    # niri spawned from a login shell leaves systemd --user and D-Bus without
+    # WAYLAND_DISPLAY, so every D-Bus-activated service inherits no display.
+    # xdg-desktop-portal-gtk then dies with "cannot open display" and each
+    # portal-backed button in Firefox -- Save As, Open File, the print dialog
+    # -- does nothing at all, with no error anywhere the user can see it.
+    #
+    # Appended rather than shipped in the tarball so that regenerating the
+    # payload from a source machine cannot quietly drop it again.
+    local config="$MNT/home/$HEVENOS_USER/.config/niri/config.kdl"
+    if [[ ! -f "$config" ]]; then
+        warn "No niri config at ${config#"$MNT"} — skipping the portal environment line."
+        warn "    Firefox's Save As and file pickers will not work until it is added."
+        return 0
+    fi
+    if grep -q dbus-update-activation-environment "$config"; then
+        return 0
+    fi
+    cat >> "$config" <<'KDL'
+
+// Hand this session's display variables to systemd --user and D-Bus so that
+// D-Bus-activated services can find the display. Without it
+// xdg-desktop-portal-gtk dies with "cannot open display", and Firefox's Save
+// As, file pickers and print dialog silently do nothing.
+spawn-at-startup "dbus-update-activation-environment" "--systemd" "WAYLAND_DISPLAY" "DISPLAY" "XDG_CURRENT_DESKTOP" "XDG_SESSION_TYPE"
+KDL
+    say "Added the portal environment line to the niri config"
+}
+
 deploy_payload() {
     say "Deploying desktop configuration"
     local home="$MNT/home/$HEVENOS_USER"
@@ -480,6 +518,7 @@ CHROOT
     # The config ships with no hardcoded home paths: niri/fish reference
     # $HOME (expanded at runtime via the login shell / spawned bash -c), so
     # the desktop works for whatever username was chosen with no rewriting.
+    ensure_portal_environment
 
     # Console login banner.
     install -Dm644 "$HERE/overlay/fish_greeting.fish" \
@@ -568,6 +607,7 @@ main() {
     install_packages
     enable_services
     configure_keyd
+    configure_default_apps
     migrate_wifi_credentials
     install_bootloader
     deploy_payload

@@ -8,6 +8,7 @@ bluez-utils
 brightnessctl
 broot
 btop
+celluloid
 chrony
 cmatrix
 cpupower
@@ -15,6 +16,7 @@ firefox
 fish
 fuzzel
 git
+gvfs
 jq
 keyd
 kitty
@@ -25,7 +27,9 @@ linux-headers
 mako
 man-db
 man-pages
+mpv
 nano
+nautilus
 networkmanager
 niri
 nmap
@@ -58,6 +62,7 @@ wireplumber
 wpa_supplicant
 xdg-desktop-portal
 xdg-desktop-portal-gtk
+xdg-utils
 xorg-xwayland
 xwayland-satellite
 zoxide
