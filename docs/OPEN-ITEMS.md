@@ -53,10 +53,3 @@ there, none implemented.
 - **§3.5 Font dependency.** `c3` requires `otf-atkinson-hyperlegible` (official
   repo) and `otf-atkinsonhyperlegiblemono-nerd`. The former was installed
   mid-session on the source machine and may not be in `pkglist-native.txt`.
-
-## 3. Cosmetic
-
-From `docs/2026-08-12-blueheaven-dual-boot-runbook.md`: `install.sh:150` writes
-`default arch` to `loader.conf`. systemd-boot matches entry IDs including the
-extension, so strictly it should be `arch.conf`. With two entries `arch.conf`
-sorts first and wins anyway.
