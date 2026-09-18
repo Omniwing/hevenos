@@ -1,12 +1,27 @@
 # shellcheck shell=bash
-# Stage 2 ran as a user's very first login and died on the first package it
-# could not install, leaving stage2.sh in place to do exactly the same thing
-# at every login afterwards. These cover the three ways that happened.
+#
+# SC2034/SC2329 are disabled for the whole file: the stubs below are called by
+# the sourced stage2.sh rather than from here, and HOME_DIR/PKG_FAILED are that
+# script's globals which the tests drive. shellcheck cannot follow the computed
+# source path to see any of it.
+# shellcheck disable=SC2034,SC2329
+# Stage 2 ran at a user's very first login and died on the first package it
+# could not install, leaving stage2.sh in place to do exactly the same thing at
+# every login afterwards. These cover the three ways that happened.
 #
 # stage2.sh guards main() behind a BASH_SOURCE/$0 comparison, so sourcing it
 # defines the functions without running an install.
-# shellcheck disable=SC1091
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/stage2.sh"
+_s2_script="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/stage2.sh"
+# shellcheck disable=SC1090
+source "$_s2_script"
+
+# Run a fragment in a child shell that has sourced stage2.sh, so it executes
+# under the real 'set -Eeuo pipefail' from line 2 of that file. The runner
+# calls each test through 'if ! "$fn"', which suspends errexit for the test's
+# whole body — so a test that needs to observe an abort MUST use this.
+_s2_call() { # shell fragment
+    bash -c 'source "$1"; eval "$2"' _ "$_s2_script" "$1" 2>&1
+}
 
 _stage2_setup() {
     _S2="$(mktemp -d)"
@@ -32,14 +47,14 @@ _stage2_setup() {
             *)   return 0 ;;
         esac
     }
-    sudo() {
-        printf 'sudo %s\n' "$*" >> "$_S2_CALLS"
-        [[ "$1" == pacman ]] && return 0
-        return 0
-    }
-    git() {   # clone into an existing-but-empty directory, as the AUR does
+    sudo() { printf 'sudo %s\n' "$*" >> "$_S2_CALLS"; return 0; }
+    git() {
+        # "${!#}" is the LAST argument, the clone destination. "${*##* }" looks
+        # like it strips through the final space, but the pattern applies to
+        # each parameter separately, so it yields the entire command line and
+        # mkdir builds *that* as a path — inside the repo, 24 times over.
         printf 'git %s\n' "$*" >> "$_S2_CALLS"
-        mkdir -p "${*##* }"
+        mkdir -p "${!#}"          # an existing but empty repo, as the AUR serves
     }
     makepkg() { printf 'makepkg %s\n' "$*" >> "$_S2_CALLS"; }
 }
@@ -49,8 +64,34 @@ _stage2_teardown() {
     rm -rf "$_S2"
 }
 
-_stage2_called() { grep -q "$1" "$_S2_CALLS"; }
+_stage2_called() { grep -qF "$1" "$_S2_CALLS"; }
 _stage2_quiet()  { "$@" >/dev/null 2>&1; }
+
+test_stage2_list_survives_a_failure_under_real_errexit() {
+    # THE regression test. Under 'set -e' the old install_aur_list died on the
+    # first package it could not install, so the rest of the list was never
+    # attempted and main() never reached the line that removes stage2.sh. This
+    # has to run in a child shell: in-process the runner has already suspended
+    # errexit, and the abort it guards against cannot happen.
+    local out
+    # shellcheck disable=SC2016  # evaluated in the child shell, not here
+    out="$(_s2_call '
+        pacman() { case "$1:$2" in -Si:good-two) return 0 ;; *) return 1 ;; esac; }
+        sudo() { return 0; }
+        git() { mkdir -p "${!#}"; }
+        list="$(mktemp)"
+        printf "bad-one\ngood-two\n" > "$list"
+        install_aur_list "$list"
+        echo "REACHED_END failed=[${PKG_FAILED[*]}]"
+        rm -f "$list"
+    ' || true)"
+    assert_contains "$out" "REACHED_END" \
+        "a package that cannot be installed must not end the run"
+    assert_contains "$out" "failed=[bad-one]" \
+        "only the package that failed is recorded"
+    assert_contains "$out" "not an AUR package" \
+        "and the reason is printed rather than swallowed"
+}
 
 test_stage2_prefers_the_official_repositories_over_the_aur() {
     # asusctl, rog-control-center and broadcom-wl-dkms all moved from the AUR
@@ -66,27 +107,40 @@ test_stage2_prefers_the_official_repositories_over_the_aur() {
 }
 
 test_stage2_skips_a_name_that_is_not_an_aur_package() {
-    # The exact failure from the trial install: git clones an empty repo, so
-    # there is no PKGBUILD and makepkg must never be reached.
+    # The exact failure from the trial install: the clone succeeds but the
+    # repository is empty, so there is no PKGBUILD and makepkg is never run.
     _stage2_setup
     local out
-    out="$(install_aur_pkg asusctl-debug 2>&1)" && assert_eq "reached" "unreachable" \
-        "install_aur_pkg must report failure for a name the AUR does not have"
+    out="$(install_aur_pkg asusctl-debug 2>&1)"
+    assert_false _stage2_quiet install_aur_pkg asusctl-debug
     assert_true grep -q 'not an AUR package' <<<"$out"
     assert_false _stage2_called 'makepkg'
     _stage2_teardown
 }
 
-test_stage2_finishes_the_list_after_a_package_fails() {
-    # The whole point: one bad name used to end the run under 'set -e'.
+test_stage2_builds_a_package_that_is_only_in_the_aur() {
+    # The path left once everything else has graduated to extra: a real
+    # PKGBUILD must still reach makepkg.
     _stage2_setup
-    _S2_OFFICIAL="rog-control-center"
-    printf 'asusctl-debug\nrog-control-center\n' > "$PKGS/optional/asus.txt"
+    git() {
+        printf 'git %s\n' "$*" >> "$_S2_CALLS"
+        mkdir -p "${!#}"
+        : > "${!#}/PKGBUILD"
+    }
+    assert_true _stage2_quiet install_aur_pkg some-aur-only-thing
+    assert_true _stage2_called 'git clone'
+    assert_true _stage2_called 'makepkg -si --noconfirm'
+    _stage2_teardown
+}
 
-    install_aur_list "$PKGS/optional/asus.txt" >/dev/null 2>&1
-    assert_eq "$?" "0" "install_aur_list returns success even when a package fails"
-    assert_true _stage2_called 'sudo pacman -S --needed --noconfirm rog-control-center'
-    assert_eq "${PKG_FAILED[*]}" "asusctl-debug" "only the failed package is recorded"
+test_stage2_records_a_package_whose_build_fails() {
+    _stage2_setup
+    git() { mkdir -p "${!#}"; : > "${!#}/PKGBUILD"; }
+    makepkg() { return 1; }
+    local out
+    out="$(install_aur_pkg broken-thing 2>&1)"
+    assert_false _stage2_quiet install_aur_pkg broken-thing
+    assert_true grep -q 'failed to build' <<<"$out"
     _stage2_teardown
 }
 

@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-[[ $EUID -ne 0 ]] || { echo "Run stage 2 as your normal user, not root." >&2; exit 1; }
 HOME_DIR="$HOME"
 PKGS="$HOME_DIR/hevenos/packages"
 
@@ -29,7 +28,7 @@ wait_for_network() {
         getent hosts aur.archlinux.org >/dev/null 2>&1 && return 0
         sleep 2
     done
-    echo ":: Network still not ready; continuing anyway (may fail)." >&2
+    return 1
 }
 
 PKG_FAILED=()
@@ -64,7 +63,11 @@ install_aur_pkg() { # pkgname -> 0 installed or already present, 1 could not
     # machine even with plenty of real disk space free elsewhere
     # ("no space left on device" despite df showing room). /var/tmp is
     # always disk-backed.
-    local tmp rc=0; tmp="$(mktemp -d --tmpdir=/var/tmp)"
+    local tmp rc=0
+    if ! tmp="$(mktemp -d --tmpdir=/var/tmp)"; then
+        echo "!! No room in /var/tmp to build $pkg." >&2
+        return 1
+    fi
     if ! git clone "https://aur.archlinux.org/$pkg.git" "$tmp/$pkg"; then
         echo "!! Could not clone $pkg from the AUR." >&2
         rc=1
@@ -109,10 +112,24 @@ main() {
     # script, as the tests do, never touches sudo.
     trap 'sudo -n rm -f /etc/sudoers.d/99-hevenos-stage2 2>/dev/null || true' EXIT
 
-    wait_for_network
+    [[ $EUID -ne 0 ]] || { echo "Run stage 2 as your normal user, not root." >&2; exit 1; }
+
+    # No network is the one failure genuinely worth retrying for: it is
+    # transient by nature and nothing below can succeed without it. Exit with
+    # stage2.sh still in place so the login hook tries again.
+    if ! wait_for_network; then
+        echo "!! Still no network. Setup will retry at your next login." >&2
+        exit 1
+    fi
+
     # Full upgrade before building anything: real time may have passed
-    # since stage 1 (reboot, walking away).
-    sudo pacman -Syu --noconfirm
+    # since stage 1 (reboot, walking away). Not fatal — a stale keyring or a
+    # mirror serving a partial database fails the same way at every login, and
+    # that is the retry loop this script exists to avoid.
+    if ! sudo pacman -Syu --noconfirm; then
+        echo "!! The full system upgrade failed; continuing with what is installed." >&2
+        PKG_FAILED+=("system upgrade (pacman -Syu)")
+    fi
     install_aur_list "$PKGS/aur.txt"
     if [[ -f "$HOME_DIR/.hevenos-asus" ]]; then
         install_aur_list "$PKGS/optional/asus.txt"

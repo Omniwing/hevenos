@@ -10,7 +10,7 @@ ask_default() { # prompt default
     local prompt="$1" default="$2" reply
     printf '%s [%s]: ' "$prompt" "$default" >&2
     IFS= read -r reply || true
-    [[ -n "$reply" ]] && echo "$reply" || echo "$default"
+    echo "${reply:-$default}"
 }
 
 ask_yes_no() { # prompt default(y|n)

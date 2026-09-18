@@ -220,7 +220,8 @@ configure_keyd() {
     # explicitly on every target — same category of gap as the getty
     # autologin drop-in.
     say "Configuring keyd (capslock as an extra Super key)"
-    install -Dm644 "$HERE/overlay/keyd-default.conf" "$MNT/etc/keyd/default.conf"
+    install -Dm644 "$HERE/overlay/keyd-default.conf" "$MNT/etc/keyd/default.conf" \
+        || warn "Could not write /etc/keyd/default.conf — capslock stays capslock."
 }
 
 configure_default_apps() {
@@ -229,7 +230,21 @@ configure_default_apps() {
     # xdg-open has nothing to launch and a link clicked in a terminal appears
     # to do nothing whatsoever.
     say "Setting default applications (firefox, nautilus, celluloid)"
-    install -Dm644 "$HERE/overlay/mimeapps.list" "$MNT/etc/xdg/mimeapps.list"
+    # Not fatal, like everything else before install_bootloader: a target with
+    # no default applications is worth far less than a target with no
+    # bootloader, which is what a die here would produce.
+    install -Dm644 "$HERE/overlay/mimeapps.list" "$MNT/etc/xdg/mimeapps.list" \
+        || { warn "Could not write /etc/xdg/mimeapps.list — links, folders and videos will not open."; return 0; }
+
+    # install_pkgs is deliberately non-fatal, so a renamed or dropped package
+    # leaves a handler pointing at a .desktop nothing provides — which fails
+    # exactly as silently as having no handler at all, the failure this file
+    # exists to prevent.
+    local pkg
+    for pkg in firefox nautilus celluloid mpv; do
+        arch-chroot "$MNT" pacman -Qq "$pkg" >/dev/null 2>&1 \
+            || warn "$pkg is not installed, so the entries pointing at it in /etc/xdg/mimeapps.list will do nothing."
+    done
 }
 
 migrate_wifi_credentials() {
@@ -243,9 +258,8 @@ migrate_wifi_credentials() {
     # (iwd's .psk profiles) — the common case; anything else (enterprise
     # wifi, open networks) falls through to stage2.sh's nmtui fallback.
     shopt -s nullglob
-    local profile ssid key uuid found=0
+    local profile ssid key uuid
     for profile in /var/lib/iwd/*.psk; do
-        found=1
         ssid="$(basename "$profile" .psk)"
         key="$(awk -F= '/^PreSharedKey=/{print $2; exit}' "$profile")"
         [[ -n "$key" ]] || key="$(awk -F= '/^Passphrase=/{print $2; exit}' "$profile")"
@@ -276,7 +290,6 @@ EOF
         say "Migrated saved wifi network '$ssid' to the installed system"
     done
     shopt -u nullglob
-    [[ "$found" == 1 ]] || return 0
 }
 
 target_swap_partition() {

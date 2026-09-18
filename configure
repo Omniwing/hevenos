@@ -21,7 +21,7 @@ declare -Ag CFG_PROTECTED=()
 declare -Ag CFG_WALKED=()
 declare -Ag CFG_IDENTITIES=()
 declare -ag CFG_CANDIDATES=()
-CFG_DESTRUCTIVE_STARTED=no
+CFG_DISK_STATE=untouched   # untouched | writing | ready
 
 cfg_swap_size_mib() { # RAM kB  disk MiB -> swap MiB
     # HevenOS does not configure hibernation.  This is working swap for memory
@@ -417,7 +417,7 @@ cfg_prepare_disk() {
     swap_end_mib=$((CFG_EFI_END_MIB + swap_mib))
 
     say "Creating GPT layout on $disk (1 GiB EFI, $((swap_mib / 1024)) GiB swap, ext4 root)"
-    CFG_DESTRUCTIVE_STARTED=yes
+    CFG_DISK_STATE=writing
     wipefs --all --force "$disk"
     parted --script --align optimal "$disk" \
         mklabel gpt \
@@ -446,7 +446,7 @@ cfg_prepare_disk() {
     mkdir -p "$MNT/efi"
     mount "$CFG_ESP" "$MNT/efi"
     sync
-    CFG_DESTRUCTIVE_STARTED=no
+    CFG_DISK_STATE=ready
 
     say "Disk preparation complete"
     lsblk --ascii -o NAME,TYPE,SIZE,FSTYPE,LABEL,PARTLABEL,MOUNTPOINTS "$disk" \
@@ -523,15 +523,20 @@ EOF
 cfg_on_error() {
     local rc=$? line="$1"
     trap - ERR
-    if [[ "$CFG_DESTRUCTIVE_STARTED" == yes ]]; then
-        warn "Disk preparation failed at line $line. The selected disk may now be only partially prepared."
-        warn "Do not run install.sh; inspect the disk and rerun configure from the beginning."
-    else
-        # A deliberate refusal calls die, which prints and exits on its own. Any
-        # other non-zero return lands here, so an unexpected exit can never look
-        # like configure simply doing nothing.
-        warn "configure stopped unexpectedly at line $line (exit $rc). No disk was changed."
-    fi
+    # A deliberate refusal calls die, which prints and exits on its own. Any
+    # other non-zero return lands here, so an unexpected exit can never look
+    # like configure simply doing nothing — and must never claim the disk is
+    # untouched once it isn't.
+    case "$CFG_DISK_STATE" in
+        writing)
+            warn "Disk preparation failed at line $line. The selected disk may now be only partially prepared."
+            warn "Do not run install.sh; inspect the disk and rerun configure from the beginning." ;;
+        ready)
+            warn "The disk was prepared successfully, but configure failed at line $line (exit $rc) while reporting the result."
+            warn "Check the layout with lsblk before running install.sh." ;;
+        *)
+            warn "configure stopped unexpectedly at line $line (exit $rc). No disk was changed." ;;
+    esac
     exit "$rc"
 }
 

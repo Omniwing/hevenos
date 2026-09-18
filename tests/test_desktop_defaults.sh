@@ -32,6 +32,7 @@ test_every_default_names_a_package_we_install() {
         [firefox.desktop]=firefox
         [org.gnome.Nautilus.desktop]=nautilus
         [io.github.celluloid_player.Celluloid.desktop]=celluloid
+        [mpv.desktop]=mpv
     )
     local desktop
     while IFS= read -r desktop; do
@@ -48,6 +49,9 @@ test_xdg_open_itself_is_installed() {
 }
 
 _dd_fake_target() { # -> MNT with a niri config in it
+    # install.sh's own globals: saved and restored around each test so a later
+    # test never inherits a path to a directory this one deleted.
+    _DD_OLD_MNT="${MNT-}"; _DD_OLD_USER="${HEVENOS_USER-}"
     MNT="$(mktemp -d)"
     HEVENOS_USER=someone
     mkdir -p "$MNT/home/$HEVENOS_USER/.config/niri"
@@ -63,7 +67,7 @@ test_portal_environment_line_is_added_once() {
     assert_eq "$(grep -c dbus-update-activation-environment "$config")" "1" \
         "the portal environment line is added when the config lacks it"
     assert_true grep -q 'WAYLAND_DISPLAY' "$config"
-    assert_true grep -q 'spawn-at-startup "waybar"' "$config" \
+    assert_contains "$(cat "$config")" 'spawn-at-startup "waybar"' \
         "the existing config is appended to, never replaced"
 
     # Re-running an installer over a target must not stack duplicates.
@@ -71,6 +75,7 @@ test_portal_environment_line_is_added_once() {
     assert_eq "$(grep -c dbus-update-activation-environment "$config")" "1" \
         "a second run adds nothing"
     rm -rf "$MNT"
+    MNT="$_DD_OLD_MNT"; HEVENOS_USER="$_DD_OLD_USER"
 }
 
 test_portal_environment_warns_instead_of_dying_without_a_config() {
@@ -81,4 +86,5 @@ test_portal_environment_warns_instead_of_dying_without_a_config() {
     assert_eq "$?" "0" "a missing niri config must not abort the install"
     assert_true grep -q 'Save As' <<<"$out"
     rm -rf "$MNT"
+    MNT="$_DD_OLD_MNT"; HEVENOS_USER="$_DD_OLD_USER"
 }
