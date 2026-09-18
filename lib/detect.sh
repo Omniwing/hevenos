@@ -81,6 +81,25 @@ needs_swap() {
     [[ "$ram_kb" -le "$threshold_kb" ]]
 }
 
+whole_disk_for() { # block device  [lsblk output] -> containing whole-disk path
+    # Reverse dependency order starts at the supplied node and walks toward
+    # the hardware.  A plain partition therefore works for sdX, NVMe and MMC
+    # without ever having to guess whether its suffix should be "1" or "p1",
+    # and any dm/LVM/crypt layer in between is walked through rather than
+    # parsed.  Fixtures can be passed as the second argument.
+    local device="$1"
+    local out="${2-$(lsblk -srno PATH,TYPE "$device" 2>/dev/null)}"
+    awk '$2 == "disk" { print $1; exit }' <<<"$out"
+}
+
+find_partition_by_partlabel() { # disk  PARTLABEL  [lsblk output]
+    # Fixtures can be passed as the third argument.  PARTLABELs used by this
+    # project contain no whitespace, keeping raw lsblk output unambiguous.
+    local disk="$1" label="$2"
+    local out="${3-$(lsblk -nrpo PATH,TYPE,PARTLABEL "$disk" 2>/dev/null)}"
+    awk -v wanted="$label" '$2 == "part" && $3 == wanted { print $1 }' <<<"$out"
+}
+
 is_asus_hardware() {
     # ${1-...}, no colon: an explicitly passed empty string (as tests do)
     # must NOT fall through to the live probe — only an omitted arg should.

@@ -29,12 +29,21 @@ detect_all() {
 }
 
 print_detection() {
+    local prepared_swap swap_status
+    prepared_swap="$(target_swap_partition 2>/dev/null || true)"
+    if [[ -n "$prepared_swap" ]]; then
+        swap_status="$prepared_swap"
+    elif needs_swap "$RAM_KB"; then
+        swap_status='2 GiB swapfile fallback'
+    else
+        swap_status='<none>'
+    fi
     cat >&2 <<EOF
   firmware : $FIRMWARE
   ucode    : ${UCODE:-<none>}
   gpu      : $GPU  ->  $GPU_PKGS
   gl floor : $GL_FLOOR
-  ram (kB) : $RAM_KB  (swap: $(needs_swap "$RAM_KB" && echo yes || echo no))
+  ram (kB) : $RAM_KB  (swap: $swap_status)
   broadcom : $BROADCOM
   asus     : $ASUS
   target   : $MNT on $ROOT_SRC
@@ -43,7 +52,7 @@ EOF
 
 preflight() {
     [[ $EUID -eq 0 ]] || die "Stage 1 must run as root in the live ISO."
-    mountpoint -q "$MNT" || die "$MNT is not mounted. Partition/format/mount first."
+    mountpoint -q "$MNT" || die "$MNT is not mounted. For a fresh whole-disk install, run ./configure first — it partitions, formats and mounts a disk for you. For dual boot or a custom layout, prepare the partitions yourself and mount root at $MNT."
     # UEFI only. BIOS/MBR is where an installer writes boot code to a whole
     # disk and clobbers the wrong one; keeping that path alive would double
     # this function and install_bootloader for hardware this project no
@@ -97,7 +106,11 @@ base_install() {
     # shellcheck disable=SC2086
     pacstrap "$MNT" base base-devel linux linux-firmware linux-headers \
         git networkmanager wpa_supplicant sudo vim nano grub efibootmgr os-prober $UCODE
-    genfstab -U "$MNT" >> "$MNT/etc/fstab"
+    # Generate only mounts below the target root.  Without -f, genfstab also
+    # copies every active host swap device from /proc/swaps; that can persist
+    # swap belonging to the live environment or another installed disk.
+    # setup_swap adds only a swap partition on the target's own disk below.
+    genfstab -U -f "$MNT" "$MNT" > "$MNT/etc/fstab"
 }
 
 collect_config() {
@@ -193,6 +206,10 @@ enable_services() {
         arch-chroot "$MNT" systemctl enable "$svc" 2>/dev/null \
             || warn "Could not enable $svc.service — its package may not have installed (check missing.txt on the target)."
     done
+    # Periodic TRIM is preferable to ext4's continuous discard option and is
+    # harmless on rotating disks: fstrim simply skips unsupported devices.
+    arch-chroot "$MNT" systemctl enable fstrim.timer 2>/dev/null \
+        || warn "Could not enable fstrim.timer — SSD TRIM will need to be enabled manually."
     arch-chroot "$MNT" systemctl disable iwd 2>/dev/null || true
 }
 
@@ -253,12 +270,73 @@ EOF
     [[ "$found" == 1 ]] || return 0
 }
 
-setup_swap() {
-    if ! needs_swap "$RAM_KB"; then
-        say "Enough RAM detected; skipping swapfile"
+target_swap_partition() {
+    # Prefer configure's explicit marker.  For a manually prepared disk, use
+    # one (and only one) swap-formatted sibling of the mounted root.  Scoping
+    # discovery to root's whole disk prevents a live-ISO or second-disk swap
+    # from leaking into the installed system.
+    local root_src disk found
+    local -a swaps=()
+    root_src="$(findmnt -no SOURCE "$MNT" 2>/dev/null || true)"
+    [[ -b "$root_src" ]] || return 1
+    disk="$(whole_disk_for "$root_src")"
+    [[ -b "$disk" ]] || return 1
+
+    found="$(find_partition_by_partlabel "$disk" HEVENOS_SWAP)"
+    if [[ -n "$found" ]]; then
+        [[ -b "$found" ]] || return 1
+        [[ "$(lsblk -dnro FSTYPE "$found" 2>/dev/null || true)" == swap ]] || return 1
+        printf '%s\n' "$found"
         return 0
     fi
-    say "Low RAM detected; creating 2 GiB swapfile"
+
+    mapfile -t swaps < <(
+        lsblk -nrpo PATH,TYPE,FSTYPE "$disk" 2>/dev/null \
+            | awk '$2 == "part" && $3 == "swap" { print $1 }'
+    )
+    (( ${#swaps[@]} == 1 )) || return 1
+    printf '%s\n' "${swaps[0]}"
+}
+
+fstab_has_swap() {
+    awk '$1 !~ /^#/ && $3 == "swap" { found=1 } END { exit !found }' "$MNT/etc/fstab"
+}
+
+setup_swap() {
+    local partition uuid disk disc_max options=defaults
+    if fstab_has_swap; then
+        say "Swap is already configured in fstab; leaving it unchanged"
+        return 0
+    fi
+
+    partition="$(target_swap_partition || true)"
+    if [[ -n "$partition" ]]; then
+        uuid="$(blkid -s UUID -o value "$partition" 2>/dev/null || true)"
+        [[ -n "$uuid" ]] || die "Prepared swap partition $partition has no UUID."
+        disk="$(whole_disk_for "$partition")"
+        disc_max="$(lsblk -bdnro DISC-MAX "$disk" 2>/dev/null || echo 0)"
+        if [[ "$disc_max" =~ ^[0-9]+$ ]] && (( disc_max > 0 )); then
+            # Trim the unused swap space once at activation, not on every
+            # discarded page; this avoids continuous-discard pathologies.
+            options=defaults,discard=once
+        fi
+        printf 'UUID=%s none swap %s 0 0\n' "$uuid" "$options" >> "$MNT/etc/fstab"
+        if [[ "$options" == *,discard=once ]]; then
+            swapon --discard=once "$partition" 2>/dev/null \
+                || warn "Could not activate $partition in the live session; it will activate at boot."
+        else
+            swapon "$partition" 2>/dev/null \
+                || warn "Could not activate $partition in the live session; it will activate at boot."
+        fi
+        say "Using prepared swap partition $partition"
+        return 0
+    fi
+
+    if ! needs_swap "$RAM_KB"; then
+        say "Enough RAM detected and no swap partition prepared; skipping swapfile"
+        return 0
+    fi
+    say "Low RAM detected and no swap partition prepared; creating 2 GiB swapfile"
     arch-chroot "$MNT" /bin/bash -euo pipefail <<'CHROOT'
 fallocate -l 2G /swapfile || dd if=/dev/zero of=/swapfile bs=1M count=2048
 chmod 600 /swapfile
@@ -483,12 +561,14 @@ main() {
     preflight
     collect_config
     base_install
+    # Bring target-local swap online before the long package transactions;
+    # low-memory machines need it most during those steps.
+    setup_swap
     apply_config
     install_packages
     enable_services
     configure_keyd
     migrate_wifi_credentials
-    setup_swap
     install_bootloader
     deploy_payload
     handoff

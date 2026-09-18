@@ -11,7 +11,7 @@ The deployer consists of two stages:
 
 ## Prerequisites
 
-- **Partitioned and mounted disks**: Before running `install.sh`, partition and format your target disk(s), then mount the root filesystem at `/mnt`.
+- **A target disk**: For a fresh whole-disk install, run `./configure` first. It interactively selects an unused internal disk, repartitions and formats it, then mounts it for `install.sh`. This destroys everything on the selected disk. For dual boot or a custom layout, skip `configure`, prepare the partitions manually, and mount root at `/mnt`.
 - **UEFI firmware**: Required. The installer refuses to run on a machine booted in BIOS/legacy mode.
 - **EFI System Partition**: Found and mounted automatically — including one already belonging to another installed operating system, which is mounted and added to, never formatted. To choose it yourself (or if more than one is free, in which case the installer stops and asks), mount it at `/mnt/efi` before running. `/boot` is a regular directory on the root filesystem; nothing needs to be mounted there.
 
@@ -44,20 +44,42 @@ Boot the Arch Linux live ISO and run the following commands:
 pacman -Sy git
 git clone https://github.com/Omniwing/hevenos.git
 cd hevenos
+./configure
 ./install.sh
 ```
+
+`configure` is the fresh-install path. It performs all hardware compatibility
+checks before touching storage, displays each candidate's model, size,
+connection, filesystems and mount points, then requires both an exact capital
+`Y` and an exact `CONFIRM`. USB/removable disks — including an ArchISO copied
+to RAM — are never offered. Mounted disks, active device-mapper/RAID stacks,
+read-only disks, and disks too small to retain a useful root filesystem are
+also excluded. The resulting GPT layout is:
+
+| Partition | Size | Format | Mount/use |
+|---|---:|---|---|
+| EFI system | 1 GiB | FAT32 | `/mnt/efi` |
+| Swap | 4–8 GiB, based on RAM and disk size | Linux swap | activated by `install.sh` |
+| Root | remainder (at least 24 GiB) | ext4 | `/mnt` |
+
+The swap sizing is for memory pressure, not hibernation; HevenOS does not
+currently configure resume-from-hibernation. `install.sh` enables weekly
+`fstrim.timer` for SSD/NVMe storage (and it safely skips unsupported disks).
+Partitioning and filesystem creation make old data inaccessible but are not a
+secure full-device overwrite.
 
 The installer will:
 
 1. **Detect hardware**: Firmware type, CPU vendor and microcode, GPU vendor and OpenGL-floor class (see Hardware Floor above), available RAM, network adapters, and the EFI System Partition to install to.
 2. **Ask everything up front**: ESP confirmation, hostname, timezone, username, root/user passwords, and (if an NVIDIA GPU was detected) proprietary-vs-nouveau — all asked back to back before anything long-running starts, so the rest of the install runs unattended.
 3. **Install base system**: Base packages, Linux kernel, firmware, microcode, git, NetworkManager, sudo, and editor.
-4. **Install packages**: Core desktop packages (niri, waybar, kitty, fish, swaybg, mako, keyd, and other GUI/OS essentials — see `packages/core.txt`) plus driver packages for the detected GPU vendor. If ASUS hardware is detected (see Optional Package Lists below), its AUR packages are queued for automatic installation in Stage 2 — no prompt.
-5. **Configure bootloader**: GRUB (`x86_64-efi`) installed to the ESP as `hevenos`, with `os-prober` enabled so any other operating system already on the machine gets its own menu entry. Kernels stay on the root filesystem, so a small ESP shared with another OS needs no extra partition.
-6. **Enable services**: NetworkManager, wpa_supplicant, chrony, Bluetooth, acpid, keyd; disable iwd to avoid conflicts.
-7. **Configure keyd**: Deploy `/etc/keyd/default.conf` (capslock remapped to an extra Super/Mod key) — a system-level file outside the home-relative tarball, recreated on every target.
-8. **Migrate WiFi credentials**: The live ISO connects to wifi via `iwd`, not NetworkManager, so those saved credentials don't carry over on their own. Any saved WPA/WPA2-personal network is converted to a NetworkManager connection profile on the target, so it auto-connects on first real boot with no re-entry of the password. (Enterprise wifi or open networks aren't covered by this and fall back to Stage 2's `nmtui` prompt.)
-9. **Deploy config**: Extract the desktop environment tarball and set fish as the login shell. The config is username-agnostic (all paths are `$HOME`-relative), so nothing needs rewriting for the chosen user.
+4. **Bring up swap**: Activate the swap partition `configure` prepared — only that partition's UUID reaches the target's fstab, never the live ISO's own swap — or, on a manually partitioned disk with no swap partition and 2 GiB of RAM or less, create a 2 GiB `/swapfile`. This runs before the long package transactions, which is when a low-memory machine needs it most.
+5. **Install packages**: Core desktop packages (niri, waybar, kitty, fish, swaybg, mako, keyd, and other GUI/OS essentials — see `packages/core.txt`) plus driver packages for the detected GPU vendor. If ASUS hardware is detected (see Optional Package Lists below), its AUR packages are queued for automatic installation in Stage 2 — no prompt.
+6. **Configure bootloader**: GRUB (`x86_64-efi`) installed to the ESP as `hevenos`, with `os-prober` enabled so any other operating system already on the machine gets its own menu entry. Kernels stay on the root filesystem, so a small ESP shared with another OS needs no extra partition.
+7. **Enable services**: NetworkManager, wpa_supplicant, chrony, Bluetooth, acpid, keyd, and weekly fstrim; disable iwd to avoid conflicts.
+8. **Configure keyd**: Deploy `/etc/keyd/default.conf` (capslock remapped to an extra Super/Mod key) — a system-level file outside the home-relative tarball, recreated on every target.
+9. **Migrate WiFi credentials**: The live ISO connects to wifi via `iwd`, not NetworkManager, so those saved credentials don't carry over on their own. Any saved WPA/WPA2-personal network is converted to a NetworkManager connection profile on the target, so it auto-connects on first real boot with no re-entry of the password. (Enterprise wifi or open networks aren't covered by this and fall back to Stage 2's `nmtui` prompt.)
+10. **Deploy config**: Extract the desktop environment tarball and set fish as the login shell. The config is username-agnostic (all paths are `$HOME`-relative), so nothing needs rewriting for the chosen user.
 
 At the end of Stage 1, reboot and remove the installation media.
 

@@ -1,3 +1,5 @@
+# shellcheck shell=bash
+# shellcheck disable=SC1091
 source "$(dirname "${BASH_SOURCE[0]}")/../lib/detect.sh"
 
 test_is_x86_64() {
@@ -92,6 +94,35 @@ test_needs_swap() {
     assert_true  needs_swap 2097152          # exactly 2 GiB
     assert_false needs_swap 8388608          # 8 GiB
     assert_true  needs_swap 4194304 8388608  # custom threshold
+}
+
+test_whole_disk_for() {
+    local nvme='/dev/nvme0n1p2 part
+/dev/nvme0n1 disk'
+    assert_eq "$(whole_disk_for /dev/nvme0n1p2 "$nvme")" "/dev/nvme0n1" \
+        "a partition resolves to its whole disk without suffix arithmetic"
+
+    local stacked='/dev/mapper/vg-root lvm
+/dev/sda2 part
+/dev/sda disk'
+    assert_eq "$(whole_disk_for /dev/mapper/vg-root "$stacked")" "/dev/sda" \
+        "dm/LVM layers are walked through to the physical disk"
+
+    assert_eq "$(whole_disk_for /dev/sda '/dev/sda disk')" "/dev/sda" \
+        "a whole disk resolves to itself"
+    assert_eq "$(whole_disk_for /dev/nothing '')" "" \
+        "no disk in the dependency chain yields nothing"
+}
+
+test_find_partition_by_partlabel() {
+    local fixture='/dev/nvme0n1 disk
+/dev/nvme0n1p1 part HEVENOS_EFI
+/dev/nvme0n1p2 part HEVENOS_SWAP
+/dev/nvme0n1p3 part HEVENOS_ROOT'
+    assert_eq "$(find_partition_by_partlabel /dev/nvme0n1 HEVENOS_SWAP "$fixture")" \
+        "/dev/nvme0n1p2" "partition lookup uses PARTLABEL, not path suffix guessing"
+    assert_eq "$(find_partition_by_partlabel /dev/nvme0n1 MISSING "$fixture")" \
+        "" "unknown PARTLABEL returns nothing"
 }
 
 test_is_asus_hardware() {

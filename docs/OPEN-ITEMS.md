@@ -4,26 +4,27 @@ Consolidated so these are findable instead of buried in dated findings docs.
 Each entry names its source. Nothing here is a defect in shipped behaviour;
 these are known gaps and judgement calls.
 
-## 1. zram is not implemented at all
+## 1. zram is not implemented
 
 `grep -ri zram` over the whole repo returns nothing.
 
-What *is* implemented is a **swapfile**, and only in the low-RAM case:
-`install.sh:256` `setup_swap()` calls `needs_swap "$RAM_KB"` (`lib/detect.sh`,
-threshold 2 GiB) and on a match creates a 2 GiB `/swapfile` and appends it to
-`/etc/fstab`. Above 2 GiB the installer creates no swap of any kind.
+The fresh whole-disk path now creates a dedicated **swap partition** in
+`configure`: RAM-sized within a 4–8 GiB bound and reduced when necessary to
+preserve at least 24 GiB for root. `install.sh` adds only that target-local
+partition to fstab. The manual-partitioning fallback retains the old behavior:
+if no swap partition exists, RAM at or below 2 GiB gets a 2 GiB `/swapfile`,
+and higher-RAM machines get no swap.
 
 Gaps:
 
-- **zram on the low-RAM target.** The HP netbook baseline (1–2 GiB) is exactly
-  the machine where compressed RAM swap beats a file on a slow disk. A
-  `zram-generator` config is a smaller change than the swapfile path already
-  merged.
-- **Nothing above 2 GiB.** No swap means no hibernate and a hard OOM under
-  memory pressure, on every normal-RAM target.
-- If both land, `setup_swap()` needs to decide between them rather than run
-  both — zram plus a disk swapfile at equal priority is a known
-  thrash pattern.
+- **zram on low-RAM targets.** Compressed RAM can still help machines with a
+  slow disk. If it lands, priorities must make zram the fast first tier and
+  disk swap the lower-priority overflow tier.
+- **Manual layouts above 2 GiB still need an explicit swap partition** if swap
+  is wanted; only `configure` guarantees one.
+- **Hibernation remains intentionally unsupported.** The new 4–8 GiB policy
+  is for memory pressure, not resume, which would also require initramfs and
+  bootloader configuration.
 
 ## 2. Payload / desktop items
 

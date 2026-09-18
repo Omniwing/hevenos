@@ -1,0 +1,537 @@
+#!/usr/bin/env bash
+# Prepare one entire internal disk for a fresh HevenOS installation.
+set -Eeuo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/ui.sh
+source "$HERE/lib/ui.sh"
+# shellcheck source=lib/detect.sh
+source "$HERE/lib/detect.sh"
+
+MNT="${HEVENOS_MNT:-/mnt}"
+
+readonly CFG_EFI_START_MIB=1
+readonly CFG_EFI_END_MIB=1025       # 1 GiB ESP, aligned after the first MiB
+readonly CFG_MIN_SWAP_MIB=4096
+readonly CFG_MAX_SWAP_MIB=8192
+readonly CFG_MIN_ROOT_MIB=24576
+readonly CFG_MIN_DISK_MIB=$((CFG_EFI_END_MIB + CFG_MIN_SWAP_MIB + CFG_MIN_ROOT_MIB + 1))
+
+declare -Ag CFG_PROTECTED=()
+declare -Ag CFG_WALKED=()
+declare -Ag CFG_IDENTITIES=()
+declare -ag CFG_CANDIDATES=()
+CFG_DESTRUCTIVE_STARTED=no
+
+cfg_swap_size_mib() { # RAM kB  disk MiB -> swap MiB
+    # HevenOS does not configure hibernation.  This is working swap for memory
+    # pressure: RAM-sized on modest machines, bounded to 4-8 GiB, and reduced
+    # on small disks so root still has at least 24 GiB.
+    local ram_kb="$1" disk_mib="$2"
+    local ram_mib desired available
+    ram_mib=$(( (ram_kb + 1023) / 1024 ))
+    desired=$(( ((ram_mib + 1023) / 1024) * 1024 ))
+    (( desired < CFG_MIN_SWAP_MIB )) && desired=$CFG_MIN_SWAP_MIB
+    (( desired > CFG_MAX_SWAP_MIB )) && desired=$CFG_MAX_SWAP_MIB
+
+    available=$((disk_mib - CFG_EFI_END_MIB - CFG_MIN_ROOT_MIB - 1))
+    (( available >= CFG_MIN_SWAP_MIB )) || return 1
+    if (( desired > available )); then
+        desired=$(( (available / 1024) * 1024 ))
+    fi
+    (( desired >= CFG_MIN_SWAP_MIB )) || return 1
+    printf '%s\n' "$desired"
+}
+
+cfg_disk_size_mib() {
+    local bytes
+    bytes="$(lsblk -bdnro SIZE "$1" 2>/dev/null)" || return 1
+    [[ "$bytes" =~ ^[0-9]+$ ]] || return 1
+    printf '%s\n' "$((bytes / 1024 / 1024))"
+}
+
+cfg_clean_field() {
+    LC_ALL=C tr -cd '[:print:]' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//'
+}
+
+cfg_indent_safe_table() {
+    # Filesystem labels are untrusted disk data.  Strip terminal control bytes
+    # so an old label cannot erase or counterfeit the destructive warning.
+    LC_ALL=C tr -cd '\11\12\15\40-\176' | sed 's/^/    /'
+}
+
+cfg_disk_field() { # device  lsblk-column
+    lsblk -dnro "$2" "$1" 2>/dev/null | cfg_clean_field
+}
+
+cfg_protect_mm() { # MAJ:MIN  reason -> protect every physical leaf disk
+    local mm="$1" reason="$2" sys k parent parent_mm slave found=""
+    local backing back_mm type path
+    [[ "$mm" =~ ^[0-9]+:[0-9]+$ && -e "/sys/dev/block/$mm" ]] || return 0
+    sys="$(readlink -f -- "/sys/dev/block/$mm")" || return 0
+    k="${sys##*/}"
+    [[ ${CFG_WALKED[$k]+present} ]] && return 0
+    CFG_WALKED["$k"]=1
+
+    if [[ -r "/sys/class/block/$k/partition" ]]; then
+        parent="${sys%/*}"
+        parent="${parent##*/}"
+        if [[ -r "/sys/class/block/$parent/dev" ]]; then
+            IFS= read -r parent_mm < "/sys/class/block/$parent/dev" || return 0
+            cfg_protect_mm "$parent_mm" "$reason"
+        fi
+        return 0
+    fi
+
+    for slave in "/sys/class/block/$k/slaves/"*; do
+        [[ -r "$slave/dev" ]] || continue
+        found=yes
+        IFS= read -r mm < "$slave/dev" || continue
+        cfg_protect_mm "$mm" "$reason"
+    done
+    [[ -n "$found" ]] && return 0
+
+    if [[ "$k" == loop* && -r "/sys/class/block/$k/loop/backing_file" ]]; then
+        IFS= read -r backing < "/sys/class/block/$k/loop/backing_file" || return 0
+        backing="${backing% (deleted)}"
+        back_mm="$(findmnt -rn -T "$backing" -o MAJ:MIN 2>/dev/null | sed -n '1p' || true)"
+        [[ -n "$back_mm" ]] && cfg_protect_mm "$back_mm" "$reason (loop backing file)"
+        return 0
+    fi
+
+    type="$(lsblk -dnro TYPE "/dev/$k" 2>/dev/null || true)"
+    if [[ "$type" == disk ]]; then
+        path="$(lsblk -dnpo PATH "/dev/$k" 2>/dev/null || true)"
+        [[ -n "$path" ]] && CFG_PROTECTED["$path"]="$reason"
+    fi
+    return 0
+}
+
+cfg_protect_path() { # block-device path  reason
+    local path="$1" reason="$2" mm
+    [[ -b "$path" ]] || return 0
+    mm="$(lsblk -dnro MAJ:MIN "$path" 2>/dev/null || true)"
+    [[ -n "$mm" ]] && cfg_protect_mm "$mm" "$reason"
+    return 0
+}
+
+cfg_protect_spec() { # blkid-style spec or device path  reason
+    local spec="$1" reason="$2" path
+    if [[ "$spec" == /dev/* ]]; then
+        path="$(readlink -f -- "$spec" 2>/dev/null || true)"
+        cfg_protect_path "$path" "$reason"
+        return 0
+    fi
+    while IFS= read -r path; do
+        cfg_protect_path "$path" "$reason"
+    done < <(blkid -t "$spec" -o device 2>/dev/null || true)
+    return 0
+}
+
+cfg_protect_boot_hints() {
+    local -a words=()
+    local word value
+    [[ -r /proc/cmdline ]] || return 0
+    read -r -a words < /proc/cmdline || true
+    for word in "${words[@]}"; do
+        case "$word" in
+            archisodevice=*|img_dev=*)
+                value="${word#*=}"
+                cfg_protect_spec "$value" "live-OS boot source" ;;
+            archisolabel=*|img_label=*)
+                value="${word#*=}"
+                cfg_protect_spec "LABEL=$value" "live-OS boot label" ;;
+            archisosearchuuid=*)
+                value="${word#*=}"
+                cfg_protect_spec "UUID=$value" "live-OS boot UUID" ;;
+        esac
+    done
+    return 0
+}
+
+cfg_usb_or_removable_evidence() { # transport  removable  sysfs-path  udev-properties
+    local tran="$1" rm="$2" sys="$3" properties="$4"
+    [[ "$tran" == usb || "$rm" == 1 || "$sys" == *"/usb"* || "$sys" == *"/usb/"* ]] \
+        || grep -qx 'ID_BUS=usb' <<<"$properties"
+}
+
+cfg_disk_is_usb_or_removable() {
+    local disk="$1" k tran rm sys properties
+    k="$(lsblk -dnro KNAME "$disk" 2>/dev/null || true)"
+    tran="$(lsblk -dnro TRAN "$disk" 2>/dev/null || true)"
+    rm="$(lsblk -dnro RM "$disk" 2>/dev/null || true)"
+    sys="$(readlink -f -- "/sys/class/block/$k" 2>/dev/null || true)"
+    properties="$(udevadm info --query=property --name="$disk" 2>/dev/null || true)"
+    cfg_usb_or_removable_evidence "$tran" "$rm" "$sys" "$properties"
+}
+
+cfg_collect_protected() {
+    local mm source disk type
+    CFG_PROTECTED=()
+    CFG_WALKED=()
+    udevadm settle --timeout=10 >/dev/null 2>&1 || true
+
+    # Start from every mounted block source.  The sysfs walk follows layers
+    # such as overlay -> loop -> dm/Ventoy -> USB back to the physical disk.
+    while IFS= read -r mm; do
+        cfg_protect_mm "$mm" "backs a mounted filesystem"
+    done < <(findmnt -rn -o MAJ:MIN 2>/dev/null || true)
+
+    while IFS= read -r source; do
+        [[ -n "$source" ]] || continue
+        if [[ -b "$source" ]]; then
+            cfg_protect_path "$source" "backs active swap"
+        else
+            mm="$(findmnt -rn -T "$source" -o MAJ:MIN 2>/dev/null | sed -n '1p' || true)"
+            [[ -n "$mm" ]] && cfg_protect_mm "$mm" "contains active swap"
+        fi
+    done < <(swapon --noheadings --raw --show=NAME 2>/dev/null || true)
+
+    # ArchISO may copy itself to RAM and unmount its boot medium.  Refusing all
+    # USB/removable disks is the only honest fail-safe in that case.  Manual
+    # partitioning remains available for deliberately installing to USB.
+    while read -r disk type; do
+        [[ "$type" == disk ]] || continue
+        if cfg_disk_is_usb_or_removable "$disk"; then
+            CFG_PROTECTED["$disk"]="USB/removable disk (installation media protected)"
+        fi
+    done < <(lsblk -dnpo PATH,TYPE 2>/dev/null)
+
+    cfg_protect_boot_hints
+    return 0
+}
+
+cfg_disk_has_mounts() {
+    lsblk -nrpo PATH,MOUNTPOINTS "$1" 2>/dev/null \
+        | awk 'NF > 1 { found=1 } END { exit !found }'
+}
+
+cfg_disk_has_complex_stack() {
+    local type
+    while IFS= read -r type; do
+        [[ "$type" == disk || "$type" == part ]] || return 0
+    done < <(lsblk -nr -o TYPE "$1" 2>/dev/null)
+    return 1
+}
+
+cfg_disk_has_holders() {
+    local disk="$1" k holder
+    while IFS= read -r k; do
+        [[ -n "$k" ]] || continue
+        for holder in "/sys/class/block/$k/holders/"*; do
+            [[ -e "$holder" ]] && return 0
+        done
+    done < <(lsblk -nr -o KNAME "$disk" 2>/dev/null)
+    return 1
+}
+
+cfg_disk_identity() {
+    local disk="$1" maj size serial wwn k diskseq=""
+    maj="$(cfg_disk_field "$disk" MAJ:MIN)"
+    size="$(lsblk -bdnro SIZE "$disk" 2>/dev/null || true)"
+    serial="$(cfg_disk_field "$disk" SERIAL)"
+    wwn="$(cfg_disk_field "$disk" WWN)"
+    k="$(lsblk -dnro KNAME "$disk" 2>/dev/null || true)"
+    [[ -r "/sys/class/block/$k/diskseq" ]] \
+        && IFS= read -r diskseq < "/sys/class/block/$k/diskseq"
+    printf '%s|%s|%s|%s|%s\n' "$maj" "$size" "$serial" "$wwn" "$diskseq"
+}
+
+cfg_disk_is_eligible() {
+    local disk="$1" type ro k disk_mib
+    [[ -b "$disk" ]] || return 1
+    type="$(lsblk -dnro TYPE "$disk" 2>/dev/null || true)"
+    ro="$(lsblk -dnro RO "$disk" 2>/dev/null || true)"
+    k="$(lsblk -dnro KNAME "$disk" 2>/dev/null || true)"
+    [[ "$type" == disk && "$ro" == 0 ]] || return 1
+    [[ ! "$k" =~ ^(zram|ram|loop|sr|fd|nbd) ]] || return 1
+    [[ -e "/sys/class/block/$k/device" ]] || return 1
+    [[ ! ${CFG_PROTECTED[$disk]+present} ]] || return 1
+    disk_mib="$(cfg_disk_size_mib "$disk")" || return 1
+    (( disk_mib >= CFG_MIN_DISK_MIB )) || return 1
+    cfg_swap_size_mib "$(awk '/MemTotal/{print $2; exit}' /proc/meminfo)" "$disk_mib" >/dev/null \
+        || return 1
+    ! cfg_disk_has_mounts "$disk" || return 1
+    ! cfg_disk_has_complex_stack "$disk" || return 1
+    ! cfg_disk_has_holders "$disk" || return 1
+}
+
+cfg_refresh_candidates() {
+    local disk type
+    CFG_CANDIDATES=()
+    CFG_IDENTITIES=()
+    cfg_collect_protected
+    while read -r disk type; do
+        [[ "$type" == disk ]] || continue
+        if cfg_disk_is_eligible "$disk"; then
+            CFG_CANDIDATES+=("$disk")
+            CFG_IDENTITIES["$disk"]="$(cfg_disk_identity "$disk")"
+        fi
+    done < <(lsblk -dnpo PATH,TYPE 2>/dev/null)
+}
+
+cfg_storage_kind() {
+    local disk="$1" rota tran
+    rota="$(lsblk -dnro ROTA "$disk" 2>/dev/null || true)"
+    tran="$(cfg_disk_field "$disk" TRAN)"
+    if [[ "$tran" == nvme ]]; then printf 'NVMe SSD'
+    elif [[ "$rota" == 0 ]]; then printf 'SSD / solid-state storage'
+    elif [[ "$rota" == 1 ]]; then printf 'rotating hard disk'
+    else printf 'unknown media type'; fi
+}
+
+cfg_discard_description() {
+    local bytes
+    bytes="$(lsblk -bdnro DISC-MAX "$1" 2>/dev/null || true)"
+    if [[ "$bytes" =~ ^[0-9]+$ ]] && (( bytes > 0 )); then
+        printf 'supported (weekly fstrim will be enabled)'
+    else
+        printf 'not reported (fstrim will safely skip it)'
+    fi
+}
+
+cfg_show_disk() {
+    local disk="$1" model serial transport
+    model="$(cfg_disk_field "$disk" MODEL)"; [[ -n "$model" ]] || model='<not reported>'
+    serial="$(cfg_disk_field "$disk" SERIAL)"; [[ -n "$serial" ]] || serial='<not reported>'
+    transport="$(cfg_disk_field "$disk" TRAN)"; [[ -n "$transport" ]] || transport='<not reported>'
+    printf '\n  Device      : %s\n' "$disk" >&2
+    printf '  Size        : %s\n' "$(cfg_disk_field "$disk" SIZE)" >&2
+    printf '  Model       : %s\n' "$model" >&2
+    printf '  Serial      : %s\n' "$serial" >&2
+    printf '  Connection  : %s\n' "$transport" >&2
+    printf '  Media       : %s\n' "$(cfg_storage_kind "$disk")" >&2
+    printf '  TRIM/discard: %s\n\n' "$(cfg_discard_description "$disk")" >&2
+    printf '  Existing layout:\n' >&2
+    lsblk --ascii -o NAME,TYPE,SIZE,FSTYPE,FSVER,LABEL,PARTLABEL,MOUNTPOINTS "$disk" \
+        | cfg_indent_safe_table >&2
+    printf '\n' >&2
+}
+
+cfg_list_candidates() {
+    local i disk model
+    printf '\nEligible internal disks:\n\n' >&2
+    for i in "${!CFG_CANDIDATES[@]}"; do
+        disk="${CFG_CANDIDATES[$i]}"
+        model="$(cfg_disk_field "$disk" MODEL)"; [[ -n "$model" ]] || model='model not reported'
+        printf '  %d) %-18s %8s  %s\n' "$((i + 1))" "$disk" \
+            "$(cfg_disk_field "$disk" SIZE)" "$model" >&2
+    done
+    printf '\n' >&2
+}
+
+cfg_read_or_abort() { # prompt -> CFG_REPLY
+    printf '%s' "$1" >&2
+    if ! IFS= read -r CFG_REPLY; then
+        die "Input closed; no disk was changed."
+    fi
+}
+
+cfg_capital_y() { [[ "${1-}" == Y ]]; }
+cfg_final_confirm() { [[ "${1-}" == CONFIRM ]]; }
+
+cfg_choose_target() {
+    local selected="" count choice index disk
+    while true; do
+        cfg_refresh_candidates
+        count=${#CFG_CANDIDATES[@]}
+        (( count > 0 )) || die "No eligible internal target disk found. USB/removable, mounted, active, read-only, and disks smaller than about 32 GB are deliberately excluded."
+
+        if (( count == 1 )); then
+            disk="${CFG_CANDIDATES[0]}"
+            cfg_show_disk "$disk"
+            cfg_read_or_abort "Is $disk your target disk? [y/N; q quits]: "
+            case "$CFG_REPLY" in
+                y|Y) selected="$disk" ;;
+                q|Q) die "Cancelled; no disk was changed." ;;
+                *)   warn "Not selected. Refreshing the disk list."; continue ;;
+            esac
+        else
+            cfg_list_candidates
+            cfg_read_or_abort "Choose a target disk [1-$count; q quits]: "
+            case "$CFG_REPLY" in
+                q|Q) die "Cancelled; no disk was changed." ;;
+                ''|*[!0-9]*) warn "Enter one of the listed numbers."; continue ;;
+            esac
+            choice="$CFG_REPLY"
+            (( choice >= 1 && choice <= count )) \
+                || { warn "Enter a number from 1 through $count."; continue; }
+            index=$((choice - 1))
+            selected="${CFG_CANDIDATES[$index]}"
+            cfg_show_disk "$selected"
+        fi
+
+        printf '\033[1;31mALL DATA ON %s WILL BE DELETED.\033[0m\n' "$selected" >&2
+        cfg_read_or_abort "Are you sure this is the right disk? Type capital Y to continue; anything else returns to disk selection: "
+        if ! cfg_capital_y "$CFG_REPLY"; then
+            warn "Confirmation not received. Returning to disk selection."
+            continue
+        fi
+
+        printf '\nPreparing to repartition and format all of %s.\n' "$selected" >&2
+        printf 'This destroys its partition table and filesystems; it is not a secure overwrite.\n' >&2
+        cfg_read_or_abort "Type CONFIRM to authorize this destructive operation: "
+        if ! cfg_final_confirm "$CFG_REPLY"; then
+            warn "Final confirmation not received. Returning to disk selection."
+            continue
+        fi
+
+        CFG_TARGET="$selected"
+        CFG_SELECTED_IDENTITY="${CFG_IDENTITIES[$selected]}"
+        return 0
+    done
+}
+
+cfg_revalidate_target() {
+    local disk="$1" expected="$2" actual
+    cfg_collect_protected
+    cfg_disk_is_eligible "$disk" \
+        || die "$disk is no longer an eligible, unused internal disk. Nothing was written."
+    actual="$(cfg_disk_identity "$disk")"
+    [[ "$actual" == "$expected" ]] \
+        || die "The device at $disk changed after selection. Nothing was written."
+}
+
+cfg_wait_for_partitions() { # disk -> sets CFG_ESP CFG_SWAP CFG_ROOT
+    local disk="$1" attempt
+    CFG_ESP=""; CFG_SWAP=""; CFG_ROOT=""
+    for ((attempt = 0; attempt < 50; attempt++)); do
+        udevadm settle --timeout=10 >/dev/null 2>&1 || true
+        CFG_ESP="$(find_partition_by_partlabel "$disk" HEVENOS_EFI)"
+        CFG_SWAP="$(find_partition_by_partlabel "$disk" HEVENOS_SWAP)"
+        CFG_ROOT="$(find_partition_by_partlabel "$disk" HEVENOS_ROOT)"
+        if [[ -b "$CFG_ESP" && -b "$CFG_SWAP" && -b "$CFG_ROOT" ]]; then
+            return 0
+        fi
+        sleep 0.1
+    done
+    return 1
+}
+
+cfg_prepare_disk() {
+    local disk="$1" disk_mib ram_kb swap_mib swap_end_mib
+    disk_mib="$(cfg_disk_size_mib "$disk")"
+    ram_kb="$(awk '/MemTotal/{print $2; exit}' /proc/meminfo)"
+    swap_mib="$(cfg_swap_size_mib "$ram_kb" "$disk_mib")" \
+        || die "$disk is too small to leave a usable root filesystem."
+    swap_end_mib=$((CFG_EFI_END_MIB + swap_mib))
+
+    say "Creating GPT layout on $disk (1 GiB EFI, $((swap_mib / 1024)) GiB swap, ext4 root)"
+    CFG_DESTRUCTIVE_STARTED=yes
+    wipefs --all --force "$disk"
+    parted --script --align optimal "$disk" \
+        mklabel gpt \
+        mkpart HEVENOS_EFI fat32 "${CFG_EFI_START_MIB}MiB" "${CFG_EFI_END_MIB}MiB" \
+        set 1 esp on \
+        mkpart HEVENOS_SWAP linux-swap "${CFG_EFI_END_MIB}MiB" "${swap_end_mib}MiB" \
+        mkpart HEVENOS_ROOT ext4 "${swap_end_mib}MiB" 100%
+    partprobe "$disk"
+    cfg_wait_for_partitions "$disk" \
+        || die "The kernel did not expose all three new partitions on $disk."
+
+    # Remove stale signatures that happened to lie under the new boundaries,
+    # then create each filesystem explicitly (parted itself never formats).
+    wipefs --all --force "$CFG_ESP"
+    wipefs --all --force "$CFG_SWAP"
+    wipefs --all --force "$CFG_ROOT"
+    say "Formatting EFI system partition as FAT32"
+    mkfs.fat -F 32 -n HEVENOS_EFI "$CFG_ESP"
+    say "Formatting swap partition"
+    mkswap -L HEVENOS_SWAP "$CFG_SWAP"
+    say "Formatting root partition as ext4"
+    mkfs.ext4 -F -m 1 -L HEVENOS_ROOT "$CFG_ROOT"
+
+    mkdir -p "$MNT"
+    mount "$CFG_ROOT" "$MNT"
+    mkdir -p "$MNT/efi"
+    mount "$CFG_ESP" "$MNT/efi"
+    sync
+    CFG_DESTRUCTIVE_STARTED=no
+
+    say "Disk preparation complete"
+    lsblk --ascii -o NAME,TYPE,SIZE,FSTYPE,LABEL,PARTLABEL,MOUNTPOINTS "$disk" \
+        | cfg_indent_safe_table >&2
+    cat >&2 <<EOF
+
+  Root is mounted at $MNT and the EFI partition at $MNT/efi.
+  Swap is formatted but intentionally inactive; install.sh will add only this
+  target's swap UUID to fstab, without copying live-ISO swap into the install.
+
+  Next: ./install.sh
+EOF
+}
+
+cfg_mounts_under_target() {
+    local target
+    while IFS= read -r target; do
+        [[ "$target" == "$MNT" || "$target" == "$MNT/"* ]] && return 0
+    done < <(findmnt -rn -o TARGET 2>/dev/null || true)
+    return 1
+}
+
+cfg_require_commands() {
+    local command missing=()
+    for command in awk blkid findmnt grep lspci lsblk mkfs.ext4 mkfs.fat mkswap \
+                   mount parted partprobe readlink sed swapon tr udevadm wipefs; do
+        command -v "$command" >/dev/null 2>&1 || missing+=("$command")
+    done
+    (( ${#missing[@]} == 0 )) \
+        || die "The live environment is missing required tools: ${missing[*]}"
+}
+
+cfg_preflight() {
+    [[ $EUID -eq 0 ]] || die "Run configure as root from the Arch Linux live ISO."
+    [[ -t 0 ]] || die "configure is interactive and requires a terminal on standard input."
+    [[ -d /run/archiso ]] || die "configure only runs from the Arch Linux live ISO."
+    cfg_require_commands
+    is_x86_64 || die "This machine is not x86_64; mainline Arch is x86_64-only."
+    [[ "$(detect_firmware)" == uefi ]] \
+        || die "This machine booted in BIOS/legacy mode. Reboot the USB in UEFI mode before preparing a disk."
+    if gpu_below_gl_floor "$(lspci -nn 2>/dev/null || true)"; then
+        die "This GPU is below HevenOS's OpenGL 3.3 hardware floor. The disk was not changed."
+    fi
+    cfg_mounts_under_target \
+        && die "$MNT or a directory beneath it is already mounted. Unmount the old target before running configure."
+}
+
+cfg_intro() {
+    cat >&2 <<EOF
+
+HevenOS disk configuration
+
+This helper prepares one entire internal disk for a fresh HevenOS install. It
+creates a GPT partition table, a 1 GiB UEFI system partition, hardware-sized
+swap, and an ext4 root filesystem, then mounts everything for install.sh.
+
+USB/removable disks (including the live USB), mounted or active disks, and
+disks too small for a useful installation are never offered. This helper is
+not for dual boot or preserving existing partitions; prepare those manually.
+
+No disk is changed until you select it and pass both destructive confirmations.
+EOF
+}
+
+cfg_on_error() {
+    local rc=$? line="$1"
+    trap - ERR
+    if [[ "$CFG_DESTRUCTIVE_STARTED" == yes ]]; then
+        warn "Disk preparation failed at line $line. The selected disk may now be only partially prepared."
+        warn "Do not run install.sh; inspect the disk and rerun configure from the beginning."
+    fi
+    exit "$rc"
+}
+
+main() {
+    trap 'cfg_on_error "$LINENO"' ERR
+    cfg_preflight
+    cfg_intro
+    cfg_choose_target
+    # Confirmations do not grant trust forever: rescan mounts, holders, USB
+    # ancestry and identity immediately before the first destructive command.
+    cfg_revalidate_target "$CFG_TARGET" "$CFG_SELECTED_IDENTITY"
+    cfg_prepare_disk "$CFG_TARGET"
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main "$@"
+fi
