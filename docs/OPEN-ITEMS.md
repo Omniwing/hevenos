@@ -53,3 +53,9 @@ there, none implemented.
 - **§3.5 Font dependency.** `c3` requires `otf-atkinson-hyperlegible` (official
   repo) and `otf-atkinsonhyperlegiblemono-nerd`. The former was installed
   mid-session on the source machine and may not be in `pkglist-native.txt`.
+
+## 3. Reminder — things to implement later (owner, 2026-09-30)
+
+Not started. I want to bring these custom terminal commands into hevenos:
+`brightmode`, `bigmode`, `red`, `blue`, `quick`, `where` — and maybe other
+custom terminal commands.
